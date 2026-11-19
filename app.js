@@ -443,6 +443,7 @@
       '<button class="primary" data-act="generate" data-type="' + type + '">' + type + ' 자동 편성</button>' +
       '<button data-act="staff" data-type="' + type + '">인원 편집</button>' +
       '<button data-act="paste" data-type="' + type + '" title="엑셀에서 복사한 표나, 사진을 Claude가 읽어 준 글자를 붙여 넣어 한 번에 입력">붙여넣기로 입력</button>' +
+      '<button data-act="photo" data-type="' + type + '" title="고친 근무표 사진을 찍어 올리면 관리자 메일로 바로 갑니다">사진으로 입력</button>' +
       '<button data-act="xlsx">xlsx 내려받기</button>' +
       '<span class="sp"></span>' +
       (found ? '<span><span class="lv-위반">위반 ' + hardN + '</span> · <span class="lv-주의">주의 ' + warnN + '</span></span>' : '<span class="note">규칙 검사를 누르면 문제 칸에 빨간 테두리가 생깁니다</span>') +
@@ -598,6 +599,7 @@
     else if (act === 'fbJson') fbJson();
     else if (act === 'staff') staffEditor(type);
     else if (act === 'paste') pasteDialog(type);
+    else if (act === 'photo') photoDialog(type);
     else if (act === 'xlsx') exportXlsx();
     else if (act === 'checkAll') { TYPES.forEach(runCheck); render(); }
     else if (act === 'goto') { S.tab = el.dataset.type; render(); }
@@ -875,7 +877,7 @@
     el.innerHTML = '<div class="box" style="text-align:left;width:min(720px,95vw);max-height:92vh;display:flex;flex-direction:column">' +
       '<h2 style="margin:0 0 6px;font-size:16px">' + type + ' 근무표 붙여넣기로 입력</h2>' +
       '<p class="note" style="margin:0 0 6px">한 줄에 한 사람: <b>이름 다음에 1일부터 코드</b>를 차례로 (칸 사이는 탭이나 띄어쓰기). 엑셀에서 표를 복사해 그대로 붙여 넣어도 됩니다.<br>' +
-      '사진만 있으면 Claude에게 사진을 보내 "붙여넣기용 글자"를 받아 넣으세요. 빈 칸·-·? 는 그대로 둡니다. 넣은 칸은 <b>직접 입력(검정)</b>이 됩니다.</p>' +
+      '사진만 있으면 Claude에게 사진을 보내 "붙여넣기용 글자"를 받아 넣으세요. (사진은 [사진으로 입력]으로 관리자 메일에 보낼 수 있습니다) 빈 칸·-·? 는 그대로 둡니다. 넣은 칸은 <b>직접 입력(검정)</b>이 됩니다.</p>' +
       '<textarea id="pasteText" rows="9" placeholder="예)\n김지현\tD\tD\t휴\t휴\tE ...\n윤은재\tD\tC\t휴\tN\tN ..." style="width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:12px/1.4 Consolas,monospace;white-space:pre"></textarea>' +
       '<div class="bar" style="margin:8px 0 0"><label>첫 코드 = <input id="pasteStart" type="number" min="1" max="31" value="1" style="width:56px">일</label>' +
       '<label><input id="pastePrev" type="checkbox"> 이름 뒤에 전월 말 5칸이 먼저 있음</label><span class="sp"></span><button id="pastePreview" class="primary">미리 보기</button></div>' +
@@ -913,6 +915,83 @@
       if (S.check[type]) S.check[type] = checkRoster(buildInput(type));
       el.remove(); render(); toast(n + '칸을 넣었습니다. (직접 입력)');
     };
+  }
+
+  // 사진으로 입력: 사진을 줄여서 관리자 메일로 보냄 (받는 주소는 Supabase 비밀 값 PHOTO_TO)
+  const PHOTO_MAX = 4, PHOTO_PX = 2400;
+  function shrinkPhoto(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const s = Math.min(1, PHOTO_PX / Math.max(img.naturalWidth, img.naturalHeight));
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
+        const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+        g.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        const data = cv.toDataURL('image/jpeg', 0.88);
+        resolve({ data, b64: data.slice(data.indexOf(',') + 1) });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(file.name + ': 사진을 읽지 못했습니다')); };
+      img.src = url;
+    });
+  }
+  function photoDialog(type) {
+    closePicker();
+    const ym = String(S.config.year % 100) + '년 ' + S.config.month + '월';
+    const el = document.createElement('div');
+    el.className = 'overlay'; el.style.zIndex = 65;
+    el.innerHTML = '<div class="box" style="text-align:left;width:min(480px,94vw)">' +
+      '<h2 style="margin:0 0 6px;font-size:16px">' + ym + ' ' + type + ' 근무표 사진으로 입력</h2>' +
+      '<p class="note" style="margin:0 0 10px">고친 근무표를 찍어 올리면 <b>관리자 메일</b>로 바로 갑니다. 표 전체가 반듯하게, 글자가 또렷하게 나오게 찍어 주세요. (최대 ' + PHOTO_MAX + '장)</p>' +
+      '<input id="photoFile" type="file" accept="image/*" multiple style="width:100%">' +
+      '<div id="photoThumbs" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"></div>' +
+      '<label style="display:block;margin-bottom:4px"><b>하고 싶은 말</b> <span class="note">(선택)</span></label>' +
+      '<input id="photoMemo" type="text" maxlength="300" placeholder="예: 15일 이후만 고쳤습니다" style="width:100%">' +
+      '<div class="err" id="photoErr"></div>' +
+      '<div class="bar" style="margin:14px 0 0;justify-content:flex-end">' +
+      '<button data-b="close">닫기</button><button class="primary" data-b="send" disabled>메일로 보내기</button></div></div>';
+    document.body.appendChild(el);
+    let photos = [];
+    $('#photoFile').onchange = async e => {
+      const files = Array.from(e.target.files || []).filter(f => /^image\//.test(f.type));
+      $('#photoErr').textContent = ''; photos = []; $('#photoThumbs').innerHTML = '';
+      el.querySelector('[data-b=send]').disabled = true;
+      if (!files.length) return;
+      if (files.length > PHOTO_MAX) { $('#photoErr').textContent = '사진은 한 번에 ' + PHOTO_MAX + '장까지입니다.'; return; }
+      busy('사진 줄이는 중…');
+      try { photos = await Promise.all(files.map(shrinkPhoto)); } catch (err) { $('#photoErr').textContent = err.message; photos = []; } finally { idle(); }
+      $('#photoThumbs').innerHTML = photos.map(p => '<img src="' + p.data + '" alt="" style="height:90px;border:1px solid var(--line);border-radius:6px">').join('');
+      el.querySelector('[data-b=send]').disabled = !photos.length;
+    };
+    el.addEventListener('click', async e => {
+      const b = e.target.closest('button[data-b]'); if (!b) return;
+      if (b.dataset.b === 'close') { el.remove(); return; }
+      if (!photos.length) return;
+      const kb = Math.round(photos.reduce((a, p) => a + p.b64.length * 0.75, 0) / 1024);
+      if (store.local) { $('#photoErr').textContent = '시험 모드(이 PC에만 저장)라 보내지 않았습니다. (사진 ' + photos.length + '장, 약 ' + kb + 'KB 준비됨)'; return; }
+      const memo = $('#photoMemo').value.trim();
+      const stampName = stamp();
+      const files = photos.map((p, i) => ({ filename: ym + ' ' + type + ' 근무표 사진 ' + stampName + (photos.length > 1 ? ' (' + (i + 1) + ')' : '') + '.jpg', file: p.b64 }));
+      const subject = '[근무표 사진] ' + ym + ' ' + type + ' · ' + S.user + ' · ' + photos.length + '장';
+      const body = ym + ' ' + type + ' 근무표 사진입니다.\n\n보낸 사람: ' + S.user + '\n사진: ' + photos.length + '장' + (memo ? '\n하고 싶은 말: ' + memo : '') +
+        '\n\n할 일: 사진을 Claude에 올려 "붙여넣기용 글자"를 받은 뒤, 홈페이지 ' + type + ' 탭 [붙여넣기로 입력]에 넣으세요.';
+      el.querySelectorAll('button,input').forEach(x => { x.disabled = true; });
+      busy('메일 보내는 중…', '사진 ' + photos.length + '장 · 약 ' + kb + 'KB');
+      try {
+        const { data, error } = await store.sb.functions.invoke('send-roster', { body: { kind: 'photo', subject, body, files } });
+        if (error) throw error;
+        if (!data || !data.ok) throw new Error((data && data.error) || '알 수 없는 오류');
+        log(type, '근무표 사진 메일 발송 (' + photos.length + '장)');
+        el.remove(); toast('사진 ' + photos.length + '장을 관리자 메일로 보냈습니다.');
+      } catch (err) {
+        let m = String((err && err.message) || err);
+        if (err && err.context && err.context.json) { try { const j = await err.context.json(); m = j.error || j.message || m; } catch (z) { /* 무시 */ } }
+        $('#photoErr').innerHTML = '보내지 못했습니다.<br><span class="note">' + esc(m) + '</span>';
+        el.querySelectorAll('button,input').forEach(z => { z.disabled = false; });
+      } finally { idle(); }
+    });
   }
 
   // ---------------------------------------------------------------- 검사결과
