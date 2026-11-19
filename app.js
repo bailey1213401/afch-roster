@@ -58,6 +58,12 @@
           if (error) throw error;
           return data.map(r => ({ key: r.key, at: r.updated_at, by: r.updated_by, label: r.label }));
         },
+        async feedbacks() {
+          const { data, error } = await sb.from('roster_kv').select('key,updated_at,info:value->info')
+            .like('key', 'fb:%').order('key', { ascending: false }).limit(200);
+          if (error) throw error;
+          return data.map(r => ({ key: r.key, at: r.updated_at, info: r.info || {} }));
+        },
         async inbox(month) {
           const { data, error } = await sb.from('roster_wish_inbox').select('*').eq('month', month).order('id', { ascending: true });
           if (error) throw error; return data;
@@ -86,6 +92,14 @@
           if (k && k.indexOf(P + 'snap:') === 0) { const v = get(k.slice(P.length)); if (v) out.push({ key: k.slice(P.length), at: v.at, by: v.value.by, label: v.value.label }); }
         }
         return out.sort((a, b) => (a.at < b.at ? 1 : -1));
+      },
+      async feedbacks() {
+        const out = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf(P + 'fb:') === 0) { const v = get(k.slice(P.length)); if (v) out.push({ key: k.slice(P.length), at: v.at, info: v.value.info || {} }); }
+        }
+        return out.sort((a, b) => (a.key < b.key ? 1 : -1));
       },
       async inbox(month) { return (get('inbox') || []).filter(x => x.month === month); },
       async inboxDone(id, by) { const l = get('inbox') || []; l.forEach(x => { if (x.id === id) { x.done = true; x.done_by = by; } }); put('inbox', l); },
@@ -176,6 +190,7 @@
       S.check = {}; S.dirty = {};
     } finally { idle(); }
     render();
+    loadFbCount().then(() => { if (S.fbOpen) render(); });
   }
 
   function normalizeRoster(ro) {
@@ -226,12 +241,13 @@
 
   const TABS = [
     ['RN', 'RN 근무표'], ['AN', 'AN 근무표'], ['check', '검사결과'], ['wish', '원티드'],
-    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['ver', '버전 기록'], ['log', '변경 기록'], ['help', '사용 설명서'],
+    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['ver', '버전 기록'], ['log', '변경 기록'], ['fb', '피드백'], ['help', '사용 설명서'],
   ];
 
   function render() {
     $('#monthLabel').textContent = S.config.year + '년 ' + S.config.month + '월';
-    $('#tabs').innerHTML = TABS.map(([k, l]) => '<button data-tab="' + k + '" class="' + (S.tab === k ? 'on' : '') + '">' + l + '</button>').join('');
+    $('#tabs').innerHTML = TABS.map(([k, l]) => '<button data-tab="' + k + '" class="' + (S.tab === k ? 'on' : '') + '">' + l +
+      (k === 'fb' && S.fbOpen ? ' <span class="badge">' + S.fbOpen + '</span>' : '') + '</button>').join('');
     const v = $('#view');
     if (S.tab === 'RN' || S.tab === 'AN') v.innerHTML = rosterView(S.tab);
     else if (S.tab === 'check') v.innerHTML = checkView();
@@ -242,6 +258,7 @@
     else if (S.tab === 'log') { v.innerHTML = '<div class="card">불러오는 중…</div>'; logView(); }
     else if (S.tab === 'help') v.innerHTML = helpView();
     else if (S.tab === 'ver') { v.innerHTML = '<div class="card">불러오는 중…</div>'; verView(); }
+    else if (S.tab === 'fb') { v.innerHTML = '<div class="card">불러오는 중…</div>'; fbView(); }
     if (tour.on) placeTour();
   }
 
@@ -259,7 +276,8 @@
         '<li><b>꼭 들어줘야 하는 것</b>(휴가·교육·확정된 원티드)은 근무표 칸을 눌러 <b>직접 넣습니다</b>. 원티드면 [원티드 순위]도 고릅니다. 이 칸은 자동 편성이 절대 바꾸지 않습니다.</li>' +
         '<li><b>원티드</b> 탭 → [○○년 ○월 원티드 받기]: 나온 링크(또는 단톡방 문구)를 단톡방에 올립니다. 모인 원티드는 [표에 넣기]로 원티드 표에 넣습니다. 순위가 높을수록 더 잘 지켜 줍니다.</li>' +
         '<li><b>규칙·예외</b> 탭: 같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다.</li>' +
-        '<li>근무표 탭에서 시간(1분 권장)을 고르고 <b>[RN 자동 편성]</b> / <b>[AN 자동 편성]</b>을 누릅니다. 끝날 때까지 창을 닫지 마세요.</li>' +
+        '<li>근무표 탭에서 <b>[RN 자동 편성]</b> / <b>[AN 자동 편성]</b>을 누릅니다. 남은 시간이 표시되고, 끝날 때까지 창을 닫지 마세요.</li>' +
+        '<li>끝나면 <b>점검 결과</b> 창이 뜹니다. 마음에 안 드는 줄에 체크하고 이유를 적어 <b>[관리자에게 보내기]</b>를 누르면, 관리자가 [피드백] 탭에서 보고 편성 규칙을 고칩니다.</li>' +
         '<li><b>[규칙 검사]</b>로 빨간 테두리 칸을 확인하고, 칸을 눌러 손으로 고칩니다. 원티드를 바꿨으면 다시 자동 편성을 돌려도 됩니다 (손으로 넣은 칸은 그대로).</li>' +
         '<li><b>[xlsx 내려받기]</b> → RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.</li>' +
         '</ol>') +
@@ -288,7 +306,7 @@
         '<ul><li>최우선: 근무 시간대별 필요 인원, 매일 밤번 시니어 1명, 휴일 그룹 구성</li>' +
         '<li>반드시: D→E→N 순서, 밤번 뒤 2일 휴무, 밤번 사이 ' + NIGHT_GAP + '일 이상, 4일 이상 연속 근무 뒤 휴무 2일, 휴무 개수, 휴일 1비·E비</li>' +
         '<li>되도록: 원티드, 밤번·휴일 근무 고르게</li></ul>' +
-        '<p class="note">오래 돌릴수록(2분, 3분 20초) 결과가 좋아집니다. 위반이 남으면 한 번 더 돌리거나 손으로 고치세요.</p>') +
+        '<p class="note">위반이 남으면 한 번 더 돌리거나 손으로 고치세요. 돌릴 때마다 결과가 조금씩 다릅니다.</p>') +
       sec('여럿이 같이 쓸 때',
         '<ul><li>고친 내용은 바로 저장되어 다른 사람 화면에도 반영됩니다. 다른 사람이 고친 걸 보려면 위쪽 <b>[새로고침]</b>을 누르세요.</li>' +
         '<li>두 사람이 동시에 같은 표를 고치면 먼저 저장된 쪽이 남고, 늦은 쪽에는 "다시 불러옵니다" 안내가 뜹니다. 방금 고친 칸만 다시 넣으면 됩니다.</li>' +
@@ -305,7 +323,7 @@
         '<li>만약을 위해 가끔 <b>설정 → [백업 파일 내려받기]</b>를 해 두세요. 백업 파일에는 이름이 들어 있으니 공용 PC에 두지 마세요.</li></ul>') +
       sec('잘 안 될 때',
         '<ul><li><b>"계속할까요?" 창 없이 아무 일도 안 일어남</b>: 확인 창을 막는 브라우저입니다. 크롬이나 엣지로 여세요.</li>' +
-        '<li><b>자동 편성 중 멈춘 것 같음</b>: 고른 시간이 다 될 때까지 기다리세요. 창을 닫거나 새로고침하면 처음부터 다시 해야 합니다.</li>' +
+        '<li><b>자동 편성 중 멈춘 것 같음</b>: 남은 시간이 0이 될 때까지 기다리세요. 창을 닫거나 새로고침하면 처음부터 다시 해야 합니다.</li>' +
         '<li><b>다른 사람이 고친 게 안 보임</b>: [새로고침]을 누르세요.</li>' +
         '<li><b>로그인이 안 됨</b>: 아이디(이메일)와 비밀번호를 확인하세요. 계정은 관리자가 Supabase에서 만듭니다.</li>' +
         '<li><b>비밀번호 바꾸기</b>: 로그인 뒤 위쪽 [비밀번호 변경]. 처음 받은 임시 비밀번호는 꼭 바꿔 주세요.</li>' +
@@ -321,14 +339,14 @@
     { tab: 'wish', sel: '#view .card', title: '원티드 받기', text: '받을 달을 고르면 신청 링크가 나옵니다. [단톡방 문구 복사]를 눌러 단톡방에 붙여 넣으세요.<br>낸 원티드는 아래 "받은 원티드"에 모이고, [표에 넣기]를 누르면 원티드 표로 들어갑니다.' },
     { tab: 'wish', sel: '#wishTable', title: '원티드 표', text: '자동 편성이 실제로 쓰는 목록입니다. 칸을 바로 고치면 저장됩니다.<br>[줄 추가]로 직접 넣을 수도 있습니다.' },
     { tab: 'rules', sel: '#view', title: '규칙·예외', text: '같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다. 다음 자동 편성부터 적용됩니다.' },
-    { tab: 'RN', sel: '#genSec', title: '편성 시간 고르기', text: '오래 돌릴수록 결과가 좋습니다. 보통 1분, 위반이 남으면 2분 이상.' },
-    { tab: 'RN', sel: '[data-act="generate"]', title: '자동 편성', text: '누르면 파란 글씨 칸을 지우고 새로 짭니다. 직접 넣은 칸과 원티드는 그대로입니다.<br>지금 눌러 봐도 됩니다. 끝날 때까지 창을 닫지 마세요.' },
+    { tab: 'RN', sel: '[data-act="generate"]', title: '자동 편성', text: '누르면 파란 글씨 칸을 지우고 새로 짭니다 (약 1분, 남은 시간 표시). 직접 넣은 칸과 원티드는 그대로입니다.<br>끝나면 점검 결과 창이 뜨고, 마음에 안 드는 줄은 체크해서 <b>관리자에게 보낼</b> 수 있습니다.' },
     { tab: 'RN', sel: '[data-act="check"]', title: '규칙 검사', text: '문제가 있는 칸에 빨간 테두리가 생깁니다. 마우스를 올리면 이유가 보입니다.' },
     { tab: 'check', sel: '#view', title: '검사결과', text: 'RN·AN 문제를 한눈에 봅니다. 줄을 누르면 해당 근무표로 갑니다.' },
     { tab: 'RN', sel: '[data-act="xlsx"]', title: 'xlsx 내려받기', text: 'RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.' },
     { tab: 'settings', sel: '#view .card:nth-of-type(4)', title: '다음 달 시작', text: '한 달이 끝나면 여기서 다음 달 근무표를 시작합니다. 지금 달은 보관됩니다.' },
     { tab: 'ver', sel: '#view', title: '버전 기록', text: '실수했을 때 되돌리는 곳입니다. 자동 편성 직전 등에는 자동으로 저장되고, 직접 메모를 달아 저장할 수도 있습니다.<br>[되돌리기]를 누르면 그때 상태로 돌아갑니다.' },
     { tab: 'log', sel: '#view', title: '변경 기록', text: '누가(아이디) 언제 어느 칸을 바꿨는지 한 줄씩 남습니다.' },
+    { tab: 'fb', sel: '#view', title: '피드백', text: '자동 편성 뒤 [관리자에게 보내기]로 들어온 의견이 모입니다. 관리자가 보고 편성 규칙을 고칩니다. 새 것이 있으면 탭에 숫자가 뜹니다.' },
     { tab: 'RN', sel: '#btnReload', title: '새로고침', text: '다른 사람이 고친 내용을 불러옵니다. 여럿이 같이 쓸 때 눌러 주세요.' },
     { tab: 'help', sel: '#tabs button[data-tab="help"]', title: '끝', text: '자세한 설명은 [사용 설명서] 탭에 있습니다. 위쪽 [따라하기] 버튼으로 언제든 다시 볼 수 있습니다.' },
   ];
@@ -421,7 +439,6 @@
     let h = '<div class="bar">' +
       '<button data-act="check" data-type="' + type + '">규칙 검사</button>' +
       '<button data-act="clearAuto" data-type="' + type + '">자동 편성 지우기</button>' +
-      '<select id="genSec" title="오래 돌릴수록 결과가 좋아집니다"><option value="30">30초</option><option value="60" selected>1분</option><option value="120">2분</option><option value="200">3분 20초</option></select>' +
       '<button class="primary" data-act="generate" data-type="' + type + '">' + type + ' 자동 편성</button>' +
       '<button data-act="staff" data-type="' + type + '">인원 편집</button>' +
       '<button data-act="xlsx">xlsx 내려받기</button>' +
@@ -572,7 +589,11 @@
       busy('버전 저장 중…'); try { await snapshot(type + ' 자동 편성 지우기 직전'); } finally { idle(); }
       const n = clearAuto(type); log(type, '자동 편성 지우기 (' + n + '칸)'); markDirty(type); S.check[type] = null; render();
     }
-    else if (act === 'generate') generate(type, Number($('#genSec').value) || 60);
+    else if (act === 'generate') generate(type, GEN_SEC);
+    else if (act === 'fbReload') fbView();
+    else if (act === 'fbDone') fbSetDone(el.dataset.key, el.dataset.done === '1');
+    else if (act === 'fbCopy') fbCopy();
+    else if (act === 'fbJson') fbJson();
     else if (act === 'staff') staffEditor(type);
     else if (act === 'xlsx') exportXlsx();
     else if (act === 'checkAll') { TYPES.forEach(runCheck); render(); }
@@ -609,16 +630,28 @@
     return n;
   }
 
+  const GEN_SEC = 60;   // 자동 편성 시간(초). 바꾸려면 이 숫자만 고치기
+  const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+
   async function generate(type, sec) {
-    if (!confirm(type + ' 자동 편성을 합니다 (' + sec + '초).\n\n자동 편성(파란 글씨) 칸을 지우고 다시 짭니다.\n직접 넣은 칸(검정)과 원티드(색 글씨)는 그대로 둡니다.\n(지금 상태는 버전으로 자동 저장됩니다)')) return;
+    if (!confirm(type + ' 자동 편성을 합니다 (약 ' + mmss(sec) + ').\n\n자동 편성(파란 글씨) 칸을 지우고 다시 짭니다.\n직접 넣은 칸(검정)과 원티드(색 글씨)는 그대로 둡니다.\n(지금 상태는 버전으로 자동 저장됩니다)')) return;
     busy('버전 저장 중…'); try { await snapshot(type + ' 자동 편성 직전'); } finally { idle(); }
     clearAuto(type);
     const input = buildInput(type);
     let w;
     try { w = new Worker('worker.js'); } catch (e) { alert('이 브라우저에서는 자동 편성을 돌릴 수 없습니다: ' + e.message); return; }
     const t0 = Date.now();
-    busy(type + ' 자동 편성 중…', '약 ' + sec + '초 걸립니다. 창을 닫지 마세요.');
-    const timer = setInterval(() => { $('#overlaySub').textContent = Math.round((Date.now() - t0) / 1000) + ' / ' + sec + '초 · 창을 닫지 마세요.'; }, 1000);
+    busy(type + ' 자동 편성 중…');
+    const tick = () => {
+      const used = (Date.now() - t0) / 1000, left = Math.max(0, Math.ceil(sec - used));
+      const pct = Math.min(100, used / sec * 100);
+      $('#overlaySub').innerHTML = '<div style="font-size:22px;font-weight:700;color:var(--accent);margin:8px 0 6px">' +
+        (left > 0 ? '남은 시간 ' + mmss(left) : '마무리 중…') + '</div>' +
+        '<div style="width:220px;height:8px;background:var(--head);border-radius:4px;overflow:hidden;margin:0 auto 6px"><div style="height:100%;width:' + pct + '%;background:var(--accent)"></div></div>' +
+        '창을 닫지 마세요.';
+    };
+    tick();
+    const timer = setInterval(tick, 500);
     w.onmessage = ev => {
       clearInterval(timer); w.terminate(); idle();
       const r = ev.data;
@@ -630,10 +663,119 @@
       const hard = found.filter(f => f.level === '위반').length;
       log(type, '자동 편성 ' + sec + '초 (' + n + '칸, 위반 ' + hard + '건)');
       markDirty(type); render();
-      toast(type + ' 자동 편성 끝: 위반 ' + hard + '건, 주의 ' + (found.length - hard) + '건');
+      resultDialog(type, found, { sec, cells: n, penalty: r.penalty, iterations: r.iterations });
     };
     w.onerror = ev => { clearInterval(timer); w.terminate(); idle(); alert('자동 편성 오류: ' + ev.message); render(); };
     w.postMessage({ input, seconds: sec });
+  }
+
+  // 편성 끝 → 점검 결과 + 관리자에게 피드백 보내기
+  function resultDialog(type, found, stats) {
+    const list = found.slice().sort((a, b) => (a.level === b.level ? 0 : a.level === '위반' ? -1 : 1));
+    const hard = list.filter(f => f.level === '위반').length;
+    const el = document.createElement('div');
+    el.className = 'overlay'; el.style.zIndex = 65;
+    el.innerHTML = '<div class="box" style="text-align:left;width:min(640px,94vw);max-height:90vh;display:flex;flex-direction:column">' +
+      '<h2 style="margin:0 0 6px;font-size:16px">' + type + ' 자동 편성 끝 · 점검 결과</h2>' +
+      '<div style="margin-bottom:6px"><span class="lv-위반">위반 ' + hard + '</span> · <span class="lv-주의">주의 ' + (list.length - hard) + '</span>' +
+      ' <span class="note">(자동으로 채운 칸 ' + stats.cells + '개)</span></div>' +
+      '<p class="note" style="margin:0 0 6px">마음에 안 드는 줄에 체크하고, 아래에 이유를 적어 <b>관리자에게 보내기</b>를 누르세요. 관리자가 [피드백] 탭에서 모아 보고 편성 규칙을 고칩니다.</p>' +
+      '<div style="overflow:auto;flex:1 1 auto;min-height:60px;border:1px solid var(--line);border-radius:6px">' +
+      (list.length ? '<table class="list" style="min-width:0"><thead><tr><th style="width:34px"></th><th>수준</th><th>규칙</th><th>대상</th><th>날짜</th><th>내용</th></tr></thead><tbody>' +
+        list.map((x, i) => '<tr><td><input type="checkbox" data-i="' + i + '" style="width:18px;height:18px"></td><td class="lv-' + x.level + '" style="white-space:nowrap">' + x.level + '</td><td>' + esc(x.rule) + '</td><td>' + esc(x.target) + '</td><td style="white-space:nowrap">' + esc(x.day) + '</td><td>' + esc(x.msg) + '</td></tr>').join('') +
+        '</tbody></table>' : '<div class="note" style="padding:12px">규칙 검사에서 걸린 것이 없습니다. 그래도 이상한 곳이 있으면 아래에 적어 보내 주세요.</div>') +
+      '</div>' +
+      '<textarea id="fbMemo" rows="3" placeholder="아쉬운 점 (예: 김OO 3일 N 다음 날 D는 피해야 함 / 주말 휴무가 한 사람에게 몰림)" style="width:100%;margin-top:8px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit"></textarea>' +
+      '<div class="err" id="fbErr"></div>' +
+      '<div class="bar" style="margin:10px 0 0;justify-content:flex-end">' +
+      '<button data-b="close">닫기</button><button data-b="check">검사결과 탭 보기</button><button class="primary" data-b="send">관리자에게 보내기</button></div></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', async e => {
+      const b = e.target.closest('button[data-b]'); if (!b) return;
+      if (b.dataset.b === 'close') { el.remove(); return; }
+      if (b.dataset.b === 'check') { el.remove(); S.tab = 'check'; render(); return; }
+      const picked = [...el.querySelectorAll('input[type=checkbox]:checked')].map(c => list[Number(c.dataset.i)]);
+      const memo = el.querySelector('#fbMemo').value.trim();
+      if (!picked.length && !memo) { el.querySelector('#fbErr').textContent = '마음에 안 드는 줄에 체크하거나, 아쉬운 점을 적어 주세요.'; return; }
+      b.disabled = true;
+      if (await sendFeedback(type, picked, memo, { ...stats, hard, warn: list.length - hard })) { el.remove(); toast('관리자에게 보냈습니다. 고마워요!'); }
+      else b.disabled = false;
+    });
+  }
+
+  async function sendFeedback(type, items, memo, stats) {
+    const at = new Date().toISOString();
+    const key = 'fb:' + at + ':' + Math.random().toString(36).slice(2, 6);
+    const ro = S.rosters[type];
+    const value = {
+      info: { type, month: monthKey(), by: S.user, at, memo, items: items.map(x => ({ level: x.level, rule: x.rule, target: x.target, day: x.day, msg: x.msg })), stats, done: false },
+      roster: { staff: ro.staff.map(p => ({ group: p.group, name: p.name, prev: p.prev, codes: p.codes, meta: p.meta })) },
+    };
+    try {
+      await store.save(key, value, null, S.user);
+      log('feedback', type + ' 편성 피드백 보냄 (' + items.length + '줄)');
+      S.fbOpen = (S.fbOpen || 0) + 1; render();
+      return true;
+    } catch (e) { toast('보내지 못했습니다: ' + e.message); return false; }
+  }
+
+  // ---------------------------------------------------------------- 피드백 (관리자용)
+  async function loadFbCount() {
+    try { const l = await store.feedbacks(); S.fbOpen = l.filter(x => !x.info.done).length; S.fbList = l; } catch (e) { /* 무시 */ }
+  }
+  function fbText(x) {
+    const i = x.info;
+    return '■ ' + new Date(i.at || x.at).toLocaleString('ko-KR') + ' · ' + (i.by || '') + ' · ' + (i.type || '') + ' ' + (i.month || '') +
+      (i.stats ? ' · 위반 ' + i.stats.hard + ' 주의 ' + i.stats.warn : '') + '\n' +
+      (i.memo ? '  메모: ' + i.memo + '\n' : '') +
+      (i.items || []).map(t => '  - [' + t.level + '] ' + t.rule + ' / ' + t.target + ' / ' + t.day + ' / ' + t.msg).join('\n');
+  }
+  async function fbView() {
+    try {
+      const l = await store.feedbacks();
+      S.fbList = l; S.fbOpen = l.filter(x => !x.info.done).length;
+      if (S.tab !== 'fb') return;
+      const open = l.filter(x => !x.info.done), done = l.filter(x => x.info.done);
+      const row = x => {
+        const i = x.info;
+        return '<tr><td>' + esc(new Date(i.at || x.at).toLocaleString('ko-KR')) + '<br><span class="note">' + esc(i.by || '') + '</span></td>' +
+          '<td>' + esc(i.type || '') + '<br><span class="note">' + esc(i.month || '') + '</span></td>' +
+          '<td>' + (i.memo ? '<b>' + esc(i.memo) + '</b><br>' : '') +
+          (i.items || []).map(t => '<span class="lv-' + esc(t.level) + '">' + esc(t.level) + '</span> ' + esc(t.rule) + ' · ' + esc(t.target) + ' · ' + (t.day ? esc(t.day) + ' · ' : '') + esc(t.msg)).join('<br>') + '</td>' +
+          '<td><button data-act="fbDone" data-key="' + esc(x.key) + '" data-done="' + (i.done ? '0' : '1') + '">' + (i.done ? '다시 열기' : '처리 완료') + '</button></td></tr>';
+      };
+      const table = rows => '<table class="list"><thead><tr><th style="width:150px">보낸 때·사람</th><th style="width:70px">근무표</th><th>내용</th><th style="width:100px"></th></tr></thead><tbody>' + rows + '</tbody></table>';
+      $('#view').innerHTML = '<div class="card"><h2>편성 피드백 · 안 본 것 ' + open.length + '건</h2>' +
+        '<p class="note">자동 편성이 끝난 뒤 점검 결과 창에서 [관리자에게 보내기]로 들어온 내용입니다. 근무표를 고친 게 아니라 <b>편성 규칙(코드)을 고칠 때 참고</b>하는 용도입니다.<br>' +
+        '[복사]를 눌러 Claude에게 붙여넣으면 규칙을 고친 core.js를 만들어 줍니다. 그때 [JSON 내려받기] 파일(그때의 편성 결과 포함)을 같이 주면 더 정확합니다.</p>' +
+        '<div class="bar"><button data-act="fbReload">새로 받은 것 보기</button><button data-act="fbCopy">안 본 것 복사</button><button data-act="fbJson">안 본 것 JSON 내려받기</button></div>' +
+        (open.length ? table(open.map(row).join('')) : '<p class="note">새 피드백이 없습니다.</p>') + '</div>' +
+        (done.length ? '<div class="card"><h2>처리 완료 ' + done.length + '건</h2>' + table(done.map(row).join('')) + '</div>' : '');
+      $('#tabs').querySelector('[data-tab=fb]').innerHTML = '피드백' + (S.fbOpen ? ' <span class="badge">' + S.fbOpen + '</span>' : '');
+    } catch (e) { $('#view').innerHTML = '<div class="card err">피드백을 불러오지 못했습니다: ' + esc(e.message) + '</div>'; }
+  }
+  async function fbSetDone(key, done) {
+    const row = await store.load(key).catch(() => null);
+    if (!row) { toast('불러오지 못했습니다.'); return; }
+    row.value.info.done = done; row.value.info.doneBy = done ? S.user : '';
+    try { await store.save(key, row.value, row.at, S.user); log('feedback', '피드백 ' + (done ? '처리 완료' : '다시 열기')); }
+    catch (e) { toast(e.conflict ? '다른 사람이 먼저 바꿨습니다. 다시 불러옵니다.' : '저장 실패: ' + e.message); }
+    fbView();
+  }
+  function fbCopy() {
+    const open = (S.fbList || []).filter(x => !x.info.done);
+    if (!open.length) { toast('복사할 피드백이 없습니다.'); return; }
+    copyText('[근무표 자동 편성 피드백 ' + open.length + '건]\n' + open.map(fbText).join('\n\n'), open.length + '건을 복사했습니다.');
+  }
+  async function fbJson() {
+    const open = (S.fbList || []).filter(x => !x.info.done);
+    if (!open.length) { toast('내려받을 피드백이 없습니다.'); return; }
+    busy('불러오는 중…');
+    try {
+      const full = [];
+      for (const x of open) { const r = await store.load(x.key).catch(() => null); if (r) full.push(r.value); }
+      download('편성 피드백 ' + stamp() + '.json', new Blob([JSON.stringify({ format: 'afch-feedback-1', config: S.config, feedbacks: full }, null, 1)], { type: 'application/json' }));
+    } finally { idle(); }
   }
 
   // 인원 편집
