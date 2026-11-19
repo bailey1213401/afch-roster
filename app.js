@@ -17,9 +17,15 @@
   function makeStore() {
     if (CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && window.supabase) {
       const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+      sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') setTimeout(() => pwDialog(true), 0); });
       return {
         local: false,
         sb,
+        async setPassword(pw) { const { error } = await sb.auth.updateUser({ password: pw }); if (error) throw error; },
+        async resetMail(email) {
+          const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+          if (error) throw error;
+        },
         async session() { const { data } = await sb.auth.getSession(); return data.session; },
         async login(email, pw) { const { error } = await sb.auth.signInWithPassword({ email, password: pw }); if (error) throw error; },
         async logout() { await sb.auth.signOut(); },
@@ -46,6 +52,12 @@
           const { data, error } = await sb.from('roster_log').select('at,by,key,note').order('id', { ascending: false }).limit(n);
           if (error) throw error; return data;
         },
+        async snaps() {
+          const { data, error } = await sb.from('roster_kv').select('key,updated_at,updated_by,label:value->>label')
+            .like('key', 'snap:%').order('updated_at', { ascending: false }).limit(200);
+          if (error) throw error;
+          return data.map(r => ({ key: r.key, at: r.updated_at, by: r.updated_by, label: r.label }));
+        },
         async inbox(month) {
           const { data, error } = await sb.from('roster_wish_inbox').select('*').eq('month', month).order('id', { ascending: true });
           if (error) throw error; return data;
@@ -59,12 +71,22 @@
     const put = (k, v) => { try { localStorage.setItem(P + k, JSON.stringify(v)); } catch (e) { alert('브라우저에 저장하지 못했습니다: ' + e.message); } };
     return {
       local: true,
+      async setPassword() { throw new Error('시험 모드에는 비밀번호가 없습니다'); },
+      async resetMail() { throw new Error('시험 모드에는 비밀번호가 없습니다'); },
       async session() { return { user: { email: '시험 모드' } }; },
       async login() {}, async logout() {},
       async load(key) { return get(key); },
       async save(key, value) { const at = new Date().toISOString(); put(key, { value, at }); return at; },
       async log(by, key, note) { const l = get('__log') || []; l.unshift({ at: new Date().toISOString(), by, key, note }); put('__log', l.slice(0, 500)); },
       async logs(n) { return (get('__log') || []).slice(0, n); },
+      async snaps() {
+        const out = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf(P + 'snap:') === 0) { const v = get(k.slice(P.length)); if (v) out.push({ key: k.slice(P.length), at: v.at, by: v.value.by, label: v.value.label }); }
+        }
+        return out.sort((a, b) => (a.at < b.at ? 1 : -1));
+      },
       async inbox(month) { return (get('inbox') || []).filter(x => x.month === month); },
       async inboxDone(id, by) { const l = get('inbox') || []; l.forEach(x => { if (x.id === id) { x.done = true; x.done_by = by; } }); put('inbox', l); },
       async inboxDelete(id) { put('inbox', (get('inbox') || []).filter(x => x.id !== id)); },
@@ -204,7 +226,7 @@
 
   const TABS = [
     ['RN', 'RN 근무표'], ['AN', 'AN 근무표'], ['check', '검사결과'], ['wish', '원티드'],
-    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['log', '변경 기록'], ['help', '사용 설명서'],
+    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['ver', '버전 기록'], ['log', '변경 기록'], ['help', '사용 설명서'],
   ];
 
   function render() {
@@ -219,6 +241,7 @@
     else if (S.tab === 'settings') v.innerHTML = settingsView();
     else if (S.tab === 'log') { v.innerHTML = '<div class="card">불러오는 중…</div>'; logView(); }
     else if (S.tab === 'help') v.innerHTML = helpView();
+    else if (S.tab === 'ver') { v.innerHTML = '<div class="card">불러오는 중…</div>'; verView(); }
     if (tour.on) placeTour();
   }
 
@@ -269,7 +292,13 @@
       sec('여럿이 같이 쓸 때',
         '<ul><li>고친 내용은 바로 저장되어 다른 사람 화면에도 반영됩니다. 다른 사람이 고친 걸 보려면 위쪽 <b>[새로고침]</b>을 누르세요.</li>' +
         '<li>두 사람이 동시에 같은 표를 고치면 먼저 저장된 쪽이 남고, 늦은 쪽에는 "다시 불러옵니다" 안내가 뜹니다. 방금 고친 칸만 다시 넣으면 됩니다.</li>' +
-        '<li>누가 언제 무엇을 바꿨는지는 <b>변경 기록</b> 탭에 남습니다.</li></ul>') +
+        '<li>누가(아이디) 언제 어느 칸을 무엇에서 무엇으로 바꿨는지는 <b>변경 기록</b> 탭에 남습니다.</li></ul>') +
+      sec('버전 기록 (실수했을 때 되돌리기)',
+        '<ul><li>창을 열고 처음 고치려고 하면 <b>"지금 상태를 버전으로 저장할까요?"</b> 창이 뜹니다. [버전 저장하고 고치기]를 누르면 고치기 전 상태가 저장됩니다.</li>' +
+        '<li>자동 편성·자동 편성 지우기·백업 덮어쓰기·다음 달 시작 직전에는 묻지 않고 <b>자동으로</b> 저장됩니다.</li>' +
+        '<li>중요한 수기 조정을 끝냈으면 <b>버전 기록</b> 탭에서 메모를 적고 [지금 상태를 버전으로 저장]을 눌러 두세요.</li>' +
+        '<li>실수했으면 <b>버전 기록</b> 탭에서 원하는 시각의 [되돌리기]. 설정·RN·AN·원티드가 모두 그때로 돌아갑니다. 되돌리기 직전 상태도 자동 저장되니 되돌린 것을 다시 되돌릴 수 있습니다.</li>' +
+        '<li>버전은 근무표와 같은 저장소(Supabase)에 저장되고, 로그인한 사람만 볼 수 있습니다.</li></ul>') +
       sec('다음 달로 넘어갈 때',
         '<ul><li><b>설정 → [다음 달 근무표 시작]</b>: 지금 달은 보관되고, 같은 인원으로 빈 근무표가 만들어집니다. 이번 달 마지막 5일은 "전월 말"로 옮겨집니다.</li>' +
         '<li>원티드 표는 비워집니다. 전출·전역(출·역)한 사람은 자동으로 빠지고, 전입자는 [인원 편집]으로 넣으세요.</li>' +
@@ -278,7 +307,9 @@
         '<ul><li><b>"계속할까요?" 창 없이 아무 일도 안 일어남</b>: 확인 창을 막는 브라우저입니다. 크롬이나 엣지로 여세요.</li>' +
         '<li><b>자동 편성 중 멈춘 것 같음</b>: 고른 시간이 다 될 때까지 기다리세요. 창을 닫거나 새로고침하면 처음부터 다시 해야 합니다.</li>' +
         '<li><b>다른 사람이 고친 게 안 보임</b>: [새로고침]을 누르세요.</li>' +
-        '<li><b>로그인이 안 됨</b>: 아이디(이메일)와 비밀번호를 확인하세요. 계정은 관리자가 Supabase에서 만듭니다.</li></ul>');
+        '<li><b>로그인이 안 됨</b>: 아이디(이메일)와 비밀번호를 확인하세요. 계정은 관리자가 Supabase에서 만듭니다.</li>' +
+        '<li><b>비밀번호 바꾸기</b>: 로그인 뒤 위쪽 [비밀번호 변경]. 처음 받은 임시 비밀번호는 꼭 바꿔 주세요.</li>' +
+        '<li><b>비밀번호를 잊음</b>: 로그인 화면에 이메일을 넣고 [비밀번호를 잊었어요] → 메일의 링크를 누르면 새 비밀번호를 정하는 창이 뜹니다. 메일이 안 오면 관리자에게 초기화를 부탁하세요.</li></ul>');
   }
 
   // ---------------------------------------------------------------- 따라하기
@@ -296,6 +327,8 @@
     { tab: 'check', sel: '#view', title: '검사결과', text: 'RN·AN 문제를 한눈에 봅니다. 줄을 누르면 해당 근무표로 갑니다.' },
     { tab: 'RN', sel: '[data-act="xlsx"]', title: 'xlsx 내려받기', text: 'RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.' },
     { tab: 'settings', sel: '#view .card:nth-of-type(4)', title: '다음 달 시작', text: '한 달이 끝나면 여기서 다음 달 근무표를 시작합니다. 지금 달은 보관됩니다.' },
+    { tab: 'ver', sel: '#view', title: '버전 기록', text: '실수했을 때 되돌리는 곳입니다. 자동 편성 직전 등에는 자동으로 저장되고, 직접 메모를 달아 저장할 수도 있습니다.<br>[되돌리기]를 누르면 그때 상태로 돌아갑니다.' },
+    { tab: 'log', sel: '#view', title: '변경 기록', text: '누가(아이디) 언제 어느 칸을 바꿨는지 한 줄씩 남습니다.' },
     { tab: 'RN', sel: '#btnReload', title: '새로고침', text: '다른 사람이 고친 내용을 불러옵니다. 여럿이 같이 쓸 때 눌러 주세요.' },
     { tab: 'help', sel: '#tabs button[data-tab="help"]', title: '끝', text: '자세한 설명은 [사용 설명서] 탭에 있습니다. 위쪽 [따라하기] 버튼으로 언제든 다시 볼 수 있습니다.' },
   ];
@@ -474,7 +507,7 @@
     const act = e.target.closest('[data-act]');
     if (act) { onAction(act.dataset.act, act); return; }
     const td = e.target.closest('td.cell');
-    if (td && (S.tab === 'RN' || S.tab === 'AN')) { openPicker(td); return; }
+    if (td && (S.tab === 'RN' || S.tab === 'AN')) { if (editAsked) openPicker(td); else beforeEdit().then(() => { if (document.body.contains(td)) openPicker(td); }); return; }
   });
 
   function openPicker(td) {
@@ -522,11 +555,20 @@
   }
 
   // ---------------------------------------------------------------- 버튼
+  const EDIT_ACTS = ['staff', 'addWish', 'delWish', 'addRule', 'delRule', 'addHoliday', 'delHoliday', 'inboxAdd', 'inboxAll'];
   async function onAction(act, el) {
     const type = el.dataset.type;
+    if (EDIT_ACTS.indexOf(act) >= 0 && !editAsked) await beforeEdit();
     if (act === 'check') { runCheck(type); render(); toast(type + ' 검사: 위반 ' + S.check[type].filter(f => f.level === '위반').length + '건'); }
+    else if (act === 'snapNow') {
+      const label = ($('#snapLabel') && $('#snapLabel').value.trim()) || '직접 저장';
+      busy('버전 저장 중…'); try { if (await snapshot(label)) toast('버전을 저장했습니다.'); } finally { idle(); }
+      render();
+    }
+    else if (act === 'snapRestore') restoreSnap(el.dataset.key);
     else if (act === 'clearAuto') {
       if (!confirm(type + ' 근무표에서 자동 편성(파란 글씨) 칸만 지웁니다. 직접 넣은 칸과 원티드는 그대로입니다.')) return;
+      busy('버전 저장 중…'); try { await snapshot(type + ' 자동 편성 지우기 직전'); } finally { idle(); }
       const n = clearAuto(type); log(type, '자동 편성 지우기 (' + n + '칸)'); markDirty(type); S.check[type] = null; render();
     }
     else if (act === 'generate') generate(type, Number($('#genSec').value) || 60);
@@ -566,8 +608,9 @@
     return n;
   }
 
-  function generate(type, sec) {
-    if (!confirm(type + ' 자동 편성을 합니다 (' + sec + '초).\n\n자동 편성(파란 글씨) 칸을 지우고 다시 짭니다.\n직접 넣은 칸(검정)과 원티드(색 글씨)는 그대로 둡니다.')) return;
+  async function generate(type, sec) {
+    if (!confirm(type + ' 자동 편성을 합니다 (' + sec + '초).\n\n자동 편성(파란 글씨) 칸을 지우고 다시 짭니다.\n직접 넣은 칸(검정)과 원티드(색 글씨)는 그대로 둡니다.\n(지금 상태는 버전으로 자동 저장됩니다)')) return;
+    busy('버전 저장 중…'); try { await snapshot(type + ' 자동 편성 직전'); } finally { idle(); }
     clearAuto(type);
     const input = buildInput(type);
     let w;
@@ -870,6 +913,7 @@
     const ny = c.month === 12 ? c.year + 1 : c.year, nm = c.month === 12 ? 1 : c.month + 1;
     if (!confirm(c.year + '년 ' + c.month + '월 근무표를 보관하고 ' + ny + '년 ' + nm + '월 근무표를 새로 만듭니다. 계속할까요?')) return;
     await flush();
+    await snapshot(c.year + '년 ' + c.month + '월 → 다음 달 시작 직전');
     const n = monthDays().length;
     const mk = monthKey();
     busy('다음 달 준비 중…');
@@ -911,7 +955,8 @@
       let data;
       try { data = JSON.parse(String(rd.result).replace(/^﻿/, '')); } catch (err) { alert('파일을 읽지 못했습니다: ' + err.message); return; }
       if (data.format !== 'afch-roster-1' || !data.config || !data.rosters) { alert('근무표 백업 파일이 아닙니다.'); return; }
-      if (!confirm('지금 저장된 설정·RN·AN·원티드를 이 파일 내용으로 바꿉니다. 계속할까요?')) return;
+      if (!confirm('지금 저장된 설정·RN·AN·원티드를 이 파일 내용으로 바꿉니다. 계속할까요?\n(지금 상태는 버전으로 자동 저장됩니다)')) return;
+      if (S.config && S.rosters.RN) await snapshot('백업 덮어쓰기 직전');
       S.config = data.config; S.rosters = { RN: data.rosters.RN || { staff: [] }, AN: data.rosters.AN || { staff: [] } };
       TYPES.forEach(t => normalizeRoster(S.rosters[t]));
       S.wishes = (data.wishes && data.wishes.list) || data.wishes || [];
@@ -998,10 +1043,136 @@
     log('config', 'xlsx 내려받기: ' + name);
   }
 
+  // ---------------------------------------------------------------- 버전 (되돌리기용 저장본)
+  /** 팝업 질문. buttons[0]이 기본(분홍) 버튼. 누른 버튼 번호를 돌려줌 (닫으면 -1) */
+  function ask(title, html, buttons) {
+    return new Promise(resolve => {
+      const el = document.createElement('div');
+      el.className = 'overlay'; el.style.zIndex = 65;
+      el.innerHTML = '<div class="box" style="text-align:left;width:min(420px,92vw)"><h2 style="margin:0 0 8px;font-size:16px">' + esc(title) + '</h2>' +
+        '<div style="font-size:14px">' + html + '</div><div class="bar" style="margin:14px 0 0;justify-content:flex-end">' +
+        buttons.map((b, i) => '<button data-i="' + i + '" class="' + (i === 0 ? 'primary' : '') + '">' + esc(b) + '</button>').join('') + '</div></div>';
+      document.body.appendChild(el);
+      el.addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (!b) return; el.remove(); resolve(Number(b.dataset.i)); });
+      el.querySelector('button.primary').focus();
+    });
+  }
+  async function snapshot(label) {
+    await flush();
+    const at = new Date().toISOString();
+    const key = 'snap:' + at + ':' + Math.random().toString(36).slice(2, 6);
+    const value = { label, by: S.user, month: monthKey(), config: S.config, rosters: S.rosters, wishes: S.wishes };
+    try { await store.save(key, value, null, S.user); log('version', '버전 저장: ' + label); return true; }
+    catch (e) { toast('버전 저장 실패: ' + e.message); return false; }
+  }
+  // 이 창에서 처음 고치기 시작할 때 한 번 묻기
+  let editAsked = false, asking = null;
+  function beforeEdit() {
+    if (editAsked) return Promise.resolve();
+    if (asking) return asking;
+    asking = ask('근무표를 고치기 시작합니다', '고치기 전 지금 상태를 <b>버전</b>으로 저장해 둘까요?<br><span class="note">실수했을 때 [버전 기록] 탭에서 이 상태로 되돌릴 수 있습니다. 이 창을 닫기 전까지는 다시 묻지 않습니다.</span>',
+      ['버전 저장하고 고치기', '그냥 고치기'])
+      .then(async i => { editAsked = true; asking = null; if (i === 0) { busy('버전 저장 중…'); try { if (await snapshot('고치기 전 (' + (S.user || '') + ')')) toast('지금 상태를 버전으로 저장했습니다.'); } finally { idle(); } } });
+    return asking;
+  }
+  $('#view').addEventListener('focusin', e => {
+    if (editAsked || !e.target.matches('input, select, textarea')) return;
+    if (e.target.id === 'genSec' || e.target.id === 'wishLink' || e.target.id === 'importFile') return;
+    beforeEdit();
+  });
+
+  async function verView() {
+    try {
+      const list = await store.snaps();
+      if (S.tab !== 'ver') return;
+      $('#view').innerHTML = '<div class="card"><h2>버전 기록 (되돌리기)</h2>' +
+        '<p class="note">버전 = 그 순간의 설정·RN·AN·원티드 전체를 통째로 저장한 것입니다. 저장 위치는 근무표와 같은 Supabase 저장소이고, 로그인한 사람만 볼 수 있습니다.<br>' +
+        '자동 편성·자동 편성 지우기·백업 덮어쓰기·다음 달 시작·되돌리기 직전에는 <b>자동으로</b> 버전이 저장됩니다. 칸 하나하나의 변경은 [변경 기록] 탭에 남습니다.</p>' +
+        '<div class="bar"><input id="snapLabel" placeholder="메모 (예: 수기 조정 끝)" style="flex:1 1 240px"><button class="primary" data-act="snapNow">지금 상태를 버전으로 저장</button></div></div>' +
+        '<div class="card"><table class="list"><thead><tr><th style="width:170px">저장 시각</th><th style="width:200px">누가</th><th>메모</th><th style="width:110px"></th></tr></thead><tbody>' +
+        (list.length ? list.map(x => '<tr><td>' + esc(new Date(x.at).toLocaleString('ko-KR')) + '</td><td>' + esc(x.by) + '</td><td>' + esc(x.label) + '</td>' +
+          '<td><button data-act="snapRestore" data-key="' + esc(x.key) + '">되돌리기</button></td></tr>').join('') : '<tr><td colspan="4" class="note">아직 저장된 버전이 없습니다.</td></tr>') +
+        '</tbody></table></div>';
+    } catch (e) { $('#view').innerHTML = '<div class="card err">버전 목록을 불러오지 못했습니다: ' + esc(e.message) + '</div>'; }
+  }
+  async function restoreSnap(key) {
+    const row = await store.load(key).catch(() => null);
+    if (!row) { toast('버전을 불러오지 못했습니다.'); return; }
+    const v = row.value;
+    const when = new Date(row.at).toLocaleString('ko-KR');
+    const i = await ask('이 버전으로 되돌릴까요?', '<b>' + esc(when) + '</b> · ' + esc(v.by || '') + '<br>' + esc(v.label || '') +
+      '<br><br>설정·RN·AN·원티드가 모두 이 때로 돌아갑니다. 되돌리기 직전 상태도 버전으로 자동 저장되니, 다시 되돌릴 수 있습니다.', ['되돌리기', '취소']);
+    if (i !== 0) return;
+    busy('되돌리는 중…');
+    try {
+      await snapshot('되돌리기 직전 자동 저장');
+      S.config = v.config; S.rosters = { RN: v.rosters.RN, AN: v.rosters.AN };
+      TYPES.forEach(t => normalizeRoster(S.rosters[t]));
+      S.wishes = v.wishes || [];
+      ['config', 'RN', 'AN', 'wishes'].forEach(k => { S.dirty[k] = true; });
+      await flush();
+      log('version', '되돌리기: ' + when + ' 버전 (' + (v.label || '') + ')');
+      S.check = {};
+    } finally { idle(); }
+    render(); toast(when + ' 버전으로 되돌렸습니다.');
+  }
+
+  // ---------------------------------------------------------------- 비밀번호
+  function pwDialog(recovery) {
+    const old = $('#pwDlg'); if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'pwDlg'; el.className = 'overlay';
+    el.innerHTML = '<div class="box" style="text-align:left;width:min(360px,92vw)">' +
+      '<h2 style="margin:0 0 6px;font-size:16px">' + (recovery ? '새 비밀번호 정하기' : '비밀번호 바꾸기') + '</h2>' +
+      '<p class="note" style="margin:0 0 10px">' + (recovery ? '메일 링크로 들어왔습니다. 새 비밀번호를 정해 주세요.' : esc(S.user) + ' 계정의 비밀번호를 바꿉니다.') + '</p>' +
+      '<input id="pw1" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" style="width:100%;margin-bottom:8px">' +
+      '<input id="pw2" type="password" placeholder="한 번 더" autocomplete="new-password" style="width:100%">' +
+      '<div class="err" id="pwErr"></div>' +
+      '<div class="bar" style="margin:12px 0 0"><span class="sp"></span><button id="pwCancel">취소</button><button class="primary" id="pwOk">바꾸기</button></div></div>';
+    document.body.appendChild(el);
+    const close = () => { el.remove(); if (recovery) history.replaceState(null, '', location.pathname); };
+    $('#pwCancel').onclick = close;
+    $('#pw1').focus();
+    const ok = async () => {
+      const a = $('#pw1').value, b = $('#pw2').value;
+      $('#pwErr').textContent = '';
+      if (a.length < 8) { $('#pwErr').textContent = '8자 이상으로 정해 주세요.'; return; }
+      if (a !== b) { $('#pwErr').textContent = '두 칸이 다릅니다.'; return; }
+      $('#pwOk').disabled = true;
+      try {
+        await store.setPassword(a);
+        close(); toast('비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.');
+        log('config', '비밀번호 변경');
+      } catch (e) {
+        const m = String(e.message || e);
+        $('#pwErr').textContent = /different from the old/i.test(m) ? '지금 비밀번호와 다른 것으로 정해 주세요.' : /weak|short|characters/i.test(m) ? '더 어려운 비밀번호로 정해 주세요.' : '바꾸지 못했습니다: ' + m;
+      } finally { $('#pwOk').disabled = false; }
+    };
+    $('#pwOk').onclick = ok;
+    $('#pw2').addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+  }
+  $('#btnPw').onclick = () => pwDialog(false);
+  $('#btnForgot').onclick = async () => {
+    const email = $('#email').value.trim();
+    $('#loginErr').textContent = '';
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('#loginErr').textContent = '위 아이디(이메일) 칸에 본인 이메일을 넣고 다시 눌러 주세요.'; return; }
+    try {
+      await store.resetMail(email);
+      $('#loginErr').innerHTML = '<span style="color:var(--ok)">' + esc(email) + ' 로 비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 누르세요.<br>메일이 안 오면 관리자에게 초기화를 부탁하세요.</span>';
+    } catch (e) {
+      $('#loginErr').textContent = /rate|seconds/i.test(e.message) ? '잠시 뒤 다시 눌러 주세요. (메일은 몇 분에 한 번만 보낼 수 있습니다)' : '보내지 못했습니다. 관리자에게 비밀번호 초기화를 부탁하세요.';
+    }
+  };
+
   // ---------------------------------------------------------------- 시작
   async function start() {
+    const hp = new URLSearchParams(location.hash.slice(1));
+    if (hp.get('error')) {
+      history.replaceState(null, '', location.pathname);
+      setTimeout(() => { $('#loginErr').textContent = /expired|invalid/i.test(hp.get('error_description') || hp.get('error_code') || '') ? '메일 링크가 만료됐습니다. [비밀번호를 잊었어요]를 다시 눌러 새 메일을 받으세요.' : '메일 링크로 들어가지 못했습니다: ' + (hp.get('error_description') || hp.get('error')); }, 0);
+    }
     $('#appTitle').textContent = CFG.TITLE || '응급실 간호 근무표';
-    if (store.local) $('#modeTag').classList.remove('hidden');
+    if (store.local) { $('#modeTag').classList.remove('hidden'); $('#btnPw').classList.add('hidden'); $('#btnForgot').classList.add('hidden'); }
     const ses = await store.session().catch(() => null);
     if (!ses) { $('#login').classList.remove('hidden'); return; }
     S.user = ses.user && ses.user.email || '';
