@@ -285,6 +285,7 @@
         '<ul><li>칸을 누르면 코드 단추가 뜹니다. 누르면 바로 저장됩니다.</li>' +
         '<li>원티드로 확정된 칸은 <b>원티드 순위</b>(1·2·3)를 먼저 고르고 코드를 누르세요. 글자 색이 바뀝니다.</li>' +
         '<li>[지우기]는 빈 칸으로 만듭니다. 빈 칸은 다음 자동 편성 때 채워집니다.</li>' +
+        '<li><b>[붙여넣기로 입력]</b>: 국방망 PC 등에서 고친 근무표를 한 번에 넣습니다. 엑셀에서 표를 복사해 붙여 넣거나, 사진만 있으면 Claude에게 사진을 보내 받은 글자를 붙여 넣으세요. [미리 보기]로 바뀌는 칸을 확인한 뒤 넣습니다 (넣기 전 버전 자동 저장).</li>' +
         '<li>맨 왼쪽 회색 5칸은 <b>지난달 마지막 5일</b>입니다. 연속 근무·밤번 뒤 휴무 검사에 쓰입니다.</li></ul>') +
       sec('글자색·배경색 뜻',
         '<div class="legend" style="font-size:13px">' +
@@ -303,7 +304,7 @@
         '<li>다음 달 원티드는 미리 받아 둘 수 있고, [다음 달 근무표 시작] 뒤에 표에 넣을 수 있습니다.</li></ul>') +
       sec('자동 편성이 지키는 것',
         '<p class="note" style="margin-top:0">자세한 순서와 점수는 <b>편성 로직</b> 탭에 있습니다. 요약하면:</p>' +
-        '<ul><li>최우선: 근무 시간대별 필요 인원, 매일 밤번 시니어 1명, 휴일 그룹 구성</li>' +
+        '<ul><li>무조건: RN 매일 밤번에 시니어(선임 그룹) 1명</li><li>최우선: 근무 시간대별 필요 인원, 휴일 그룹 구성</li>' +
         '<li>반드시: D→E→N 순서, 밤번 뒤 2일 휴무, 밤번 사이 ' + NIGHT_GAP + '일 이상, 4일 이상 연속 근무 뒤 휴무 2일, 휴무 개수, 휴일 1비·E비</li>' +
         '<li>되도록: 원티드, 밤번·휴일 근무 고르게</li></ul>' +
         '<p class="note">위반이 남으면 한 번 더 돌리거나 손으로 고치세요. 돌릴 때마다 결과가 조금씩 다릅니다.</p>') +
@@ -441,6 +442,7 @@
       '<button data-act="clearAuto" data-type="' + type + '">자동 편성 지우기</button>' +
       '<button class="primary" data-act="generate" data-type="' + type + '">' + type + ' 자동 편성</button>' +
       '<button data-act="staff" data-type="' + type + '">인원 편집</button>' +
+      '<button data-act="paste" data-type="' + type + '" title="엑셀에서 복사한 표나, 사진을 Claude가 읽어 준 글자를 붙여 넣어 한 번에 입력">붙여넣기로 입력</button>' +
       '<button data-act="xlsx">xlsx 내려받기</button>' +
       '<span class="sp"></span>' +
       (found ? '<span><span class="lv-위반">위반 ' + hardN + '</span> · <span class="lv-주의">주의 ' + warnN + '</span></span>' : '<span class="note">규칙 검사를 누르면 문제 칸에 빨간 테두리가 생깁니다</span>') +
@@ -595,6 +597,7 @@
     else if (act === 'fbCopy') fbCopy();
     else if (act === 'fbJson') fbJson();
     else if (act === 'staff') staffEditor(type);
+    else if (act === 'paste') pasteDialog(type);
     else if (act === 'xlsx') exportXlsx();
     else if (act === 'checkAll') { TYPES.forEach(runCheck); render(); }
     else if (act === 'goto') { S.tab = el.dataset.type; render(); }
@@ -816,6 +819,102 @@
     $('#stDone').onclick = () => { S.check[type] = null; render(); };
   }
 
+  // ---------------------------------------------------------------- 붙여넣기로 입력 (엑셀 복사 / 사진을 Claude가 읽어 준 글자)
+  const SKIP_WORDS = /^(선임|차선임|시니어|중간|막내|실습|주무관|의무병|\(.*\))$/;
+  const BLANK = /^(|-|·|\.|_|\?)$/;
+  const bareName = n => String(n).replace(/\(.*?\)/g, ' ').trim().split(/\s+/).pop() || '';
+  function normCode(t) {
+    if (CODE_LIST.indexOf(t) >= 0) return t;
+    if (/^(오프|off|o)$/i.test(t)) return '휴';
+    const hit = CODE_LIST.filter(c => c.toLowerCase() === t.toLowerCase());
+    return hit.length === 1 ? hit[0] : null;
+  }
+  /** 붙여 넣은 글자를 읽어 바뀔 칸 목록을 만듦. 바로 고치지 않음. */
+  function parsePaste(type, text, startDay, withPrev) {
+    const ro = S.rosters[type], n = monthDays().length;
+    const bares = ro.staff.map(p => bareName(p.name));
+    const people = [], errors = [], seen = {};
+    text.split(/\r?\n/).forEach((line, li) => {
+      if (!line.trim()) return;
+      const cells = line.indexOf('\t') >= 0 ? line.split('\t').map(s => s.trim()) : line.trim().split(/\s+/);
+      // 이름 칸 찾기: 줄 안에서 인원 이름(계급·기수 뺀 이름)이 든 첫 칸
+      let at = -1, k = -1;
+      for (let c = 0; c < cells.length && at < 0; c++) {
+        const hits = bares.map((b, i) => (b && cells[c].indexOf(b) >= 0 ? i : -1)).filter(i => i >= 0);
+        if (hits.length === 1) { at = c; k = hits[0]; }
+        else if (hits.length > 1) { const ex = hits.filter(i => ro.staff[i].name === cells[c] || bares[i] === cells[c]); if (ex.length === 1) { at = c; k = ex[0]; } }
+      }
+      if (k < 0) { errors.push((li + 1) + '번째 줄: 이름을 찾지 못함 → ' + line.slice(0, 30)); return; }
+      if (seen[k]) { errors.push((li + 1) + '번째 줄: ' + ro.staff[k].name + ' 줄이 두 번 있음 (뒤의 것 무시)'); return; }
+      seen[k] = 1;
+      let rest = cells.slice(at + 1);
+      while (rest.length && SKIP_WORDS.test(rest[0])) rest.shift();
+      const p = ro.staff[k], ch = [], bad = [];
+      if (withPrev) {
+        rest.splice(0, 5).forEach((t, i) => {
+          if (BLANK.test(t)) return;
+          const c = normCode(t); if (!c) { bad.push('전월 ' + (i - 5) + ': ' + t); return; }
+          if ((p.prev[i] || '') !== c) ch.push({ prev: true, d: i, from: p.prev[i] || '', to: c });
+        });
+      }
+      rest.forEach((t, i) => {
+        const d = startDay - 1 + i;
+        if (d >= n) { if (!BLANK.test(t)) bad.push((d + 1) + '일: 이 달에 없는 날'); return; }
+        if (BLANK.test(t)) return;
+        const c = normCode(t); if (!c) { bad.push((d + 1) + '일: ' + t); return; }
+        if ((p.codes[d] || '') !== c) ch.push({ d, from: p.codes[d] || '', to: c });
+      });
+      people.push({ k, name: p.name, ch, bad, count: rest.length });
+    });
+    return { people, errors };
+  }
+  function pasteDialog(type) {
+    closePicker();
+    const el = document.createElement('div');
+    el.className = 'overlay'; el.style.zIndex = 65;
+    el.innerHTML = '<div class="box" style="text-align:left;width:min(720px,95vw);max-height:92vh;display:flex;flex-direction:column">' +
+      '<h2 style="margin:0 0 6px;font-size:16px">' + type + ' 근무표 붙여넣기로 입력</h2>' +
+      '<p class="note" style="margin:0 0 6px">한 줄에 한 사람: <b>이름 다음에 1일부터 코드</b>를 차례로 (칸 사이는 탭이나 띄어쓰기). 엑셀에서 표를 복사해 그대로 붙여 넣어도 됩니다.<br>' +
+      '사진만 있으면 Claude에게 사진을 보내 "붙여넣기용 글자"를 받아 넣으세요. 빈 칸·-·? 는 그대로 둡니다. 넣은 칸은 <b>직접 입력(검정)</b>이 됩니다.</p>' +
+      '<textarea id="pasteText" rows="9" placeholder="예)\n김지현\tD\tD\t휴\t휴\tE ...\n윤은재\tD\tC\t휴\tN\tN ..." style="width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:12px/1.4 Consolas,monospace;white-space:pre"></textarea>' +
+      '<div class="bar" style="margin:8px 0 0"><label>첫 코드 = <input id="pasteStart" type="number" min="1" max="31" value="1" style="width:56px">일</label>' +
+      '<label><input id="pastePrev" type="checkbox"> 이름 뒤에 전월 말 5칸이 먼저 있음</label><span class="sp"></span><button id="pastePreview" class="primary">미리 보기</button></div>' +
+      '<div id="pasteOut" style="overflow:auto;flex:1 1 auto;min-height:0;margin-top:8px"></div>' +
+      '<div class="bar" style="margin:10px 0 0;justify-content:flex-end"><button id="pasteClose">닫기</button><button id="pasteApply" class="primary" disabled>이대로 넣기</button></div></div>';
+    document.body.appendChild(el);
+    let parsed = null;
+    const preview = () => {
+      parsed = parsePaste(type, $('#pasteText').value, Math.max(1, Number($('#pasteStart').value) || 1), $('#pastePrev').checked);
+      const total = parsed.people.reduce((a, x) => a + x.ch.length, 0);
+      let h = '<div style="margin-bottom:6px"><b>' + parsed.people.length + '명 · 바뀌는 칸 ' + total + '개</b> <span class="note">아래를 사진·원본과 비교해 보고 넣으세요.</span></div>';
+      if (parsed.errors.length) h += '<div class="err" style="margin-bottom:6px">' + parsed.errors.map(esc).join('<br>') + '</div>';
+      h += '<table class="list" style="min-width:0"><thead><tr><th style="width:150px">이름</th><th>바뀌는 칸 (지금 → 새로)</th></tr></thead><tbody>' +
+        parsed.people.map(x => '<tr><td>' + esc(x.name) + '<br><span class="note">' + x.count + '칸 읽음</span></td><td>' +
+          (x.ch.length ? x.ch.map(c => '<span style="white-space:nowrap;margin-right:8px">' + (c.prev ? '전월' + (c.d - 5) : (c.d + 1) + '일') + ' ' + esc(c.from || '빈칸') + '→<b>' + esc(c.to) + '</b></span>').join(' ') : '<span class="note">바뀌는 칸 없음</span>') +
+          (x.bad.length ? '<div class="err">못 읽은 칸: ' + x.bad.map(esc).join(', ') + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>';
+      $('#pasteOut').innerHTML = h;
+      $('#pasteApply').disabled = !total;
+    };
+    $('#pastePreview').onclick = preview;
+    $('#pasteClose').onclick = () => el.remove();
+    $('#pasteText').focus();
+    $('#pasteApply').onclick = async () => {
+      if (!parsed) return;
+      $('#pasteApply').disabled = true;
+      busy('버전 저장 중…'); try { await snapshot(type + ' 붙여넣기 입력 직전'); } finally { idle(); }
+      const ro = S.rosters[type];
+      let n = 0;
+      parsed.people.forEach(x => {
+        const p = ro.staff[x.k];
+        x.ch.forEach(c => { if (c.prev) p.prev[c.d] = c.to; else { p.codes[c.d] = c.to; p.meta[c.d] = ''; } n++; });
+        if (x.ch.length) log(type, '붙여넣기 입력: ' + p.name + ' ' + x.ch.map(c => (c.prev ? '전월' + (c.d - 5) : (c.d + 1)) + '일 ' + (c.from || '빈칸') + '→' + c.to).join(', '));
+      });
+      markDirty(type);
+      if (S.check[type]) S.check[type] = checkRoster(buildInput(type));
+      el.remove(); render(); toast(n + '칸을 넣었습니다. (직접 입력)');
+    };
+  }
+
   // ---------------------------------------------------------------- 검사결과
   function checkView() {
     TYPES.forEach(t => { if (!S.check[t]) runCheck(t); });
@@ -981,8 +1080,9 @@
   function priorityRows(need) {
     const p = (a, b) => a + '·' + b;
     return [
+      ['★ 무조건', 'RN 밤번 시니어', '평일·휴일 매일 밤번에 시니어(선임 그룹) 1명 이상. 어떤 규칙보다 먼저 지킵니다 (밤번을 안 서는 선임·차선임은 제외하고 나머지 시니어 중에서)', '금지', String(NIGHT_SENIOR)],
       ['⓪ 최우선', '필요 인원', 'RN 평일 낮번 ' + need.rnDay[0] + '·초번 ' + need.rnEve[0] + '·밤번 ' + need.rnNight[0] + ', 휴일 낮번 ' + need.rnDay[1] + '·초번 ' + need.rnEve[1] + '·밤번 ' + need.rnNight[1] + ' / AN 낮번 ' + p(need.anDay[0], need.anDay[1]) + '·초번 ' + p(need.anEve[0], need.anEve[1]) + '·밤번 ' + p(need.anNight[0], need.anNight[1]), '금지', STAFF_HARD + ' (1명당)'],
-      ['⓪ 최우선', '밤번 시니어·휴일 그룹 구성', '매일 밤번 시니어 1명 이상. 휴일 낮번·초번·밤번마다 시니어·중간·막내 각 1명 이상', '금지', String(STAFF_HARD)],
+      ['⓪ 최우선', '휴일 그룹 구성', '휴일 낮번·초번·밤번마다 시니어·중간·막내 각 1명 이상', '금지', String(STAFF_HARD)],
       ['① 반드시', '휴일 1비·E비', '휴일마다 1비·E비 1명', '금지', String(HARD)],
       ['① 반드시', '평일 낮번 구성', '선임·차선임 1명 이상, 시니어 또는 중간 1명 이상, C 1명', '금지', String(HARD)],
       ['① 반드시', '근무 순서', 'D → E → N 순방향만, E-휴-D 금지', '금지', String(HARD)],
@@ -1330,9 +1430,34 @@
   $('#btnLogin').onclick = async () => {
     $('#loginErr').textContent = '';
     try { await store.login($('#email').value.trim(), $('#pw').value); $('#pw').value = ''; await start(); }
-    catch (e) { $('#loginErr').textContent = '로그인 실패: 아이디나 비밀번호를 확인하세요.'; }
+    catch (e) { $('#loginErr').innerHTML = await loginErrText(e); }
   };
   $('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btnLogin').click(); });
+  // 로그인 실패 이유를 나눠서 보여 줌 (비밀번호 틀림 / 서버 연결 막힘 / 브라우저 저장 막힘)
+  async function loginErrText(e) {
+    const m = String((e && (e.message || e.name)) || e);
+    if (/invalid login credentials|invalid_credentials/i.test(m))
+      return '아이디(이메일)나 비밀번호가 틀립니다.<br><span class="note">Caps Lock이 켜져 있지 않은지, 한/영 키가 영문인지 확인하세요. 아이디는 이메일 전체입니다.</span>';
+    if (/email not confirmed/i.test(m)) return '아직 확인되지 않은 계정입니다. 관리자에게 알려 주세요.';
+    let reach = '';
+    try {
+      const r = await fetch(CFG.SUPABASE_URL + '/auth/v1/health', { headers: { apikey: CFG.SUPABASE_ANON_KEY } });
+      reach = r.ok ? 'ok' : 'http ' + r.status;
+    } catch (x) { reach = 'blocked'; }
+    if (reach === 'blocked' || /fetch|network|load failed/i.test(m))
+      return '<b>저장소 서버에 연결하지 못했습니다.</b> 비밀번호 문제가 아닙니다.<br><span class="note">이 PC의 네트워크(국방망 등)가 <b>supabase.co</b> 주소를 막고 있는 것 같습니다. 휴대폰이나 다른 PC에서는 됩니다. 보안 담당에게 이 주소 허용을 요청해야 합니다.</span>' +
+        '<div class="note" style="margin-top:4px">자세히: ' + esc(m) + ' / 연결 검사: ' + reach + '</div>';
+    if (/storage|quota|securityerror/i.test(m))
+      return '이 브라우저가 로그인 정보를 저장하지 못하게 막혀 있습니다 (시크릿 창이거나 보안 설정). 일반 창의 크롬·엣지로 열어 보세요.<div class="note">자세히: ' + esc(m) + '</div>';
+    return '로그인하지 못했습니다.<div class="note">자세히: ' + esc(m) + ' / 연결 검사: ' + reach + '</div>';
+  }
+  $('#pw').addEventListener('keyup', e => {
+    const caps = e.getModifierState && e.getModifierState('CapsLock');
+    const han = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test($('#pw').value);
+    const w = caps ? 'Caps Lock이 켜져 있습니다.' : han ? '비밀번호가 한글로 입력되고 있습니다. 한/영 키를 눌러 주세요.' : '';
+    if (w) $('#loginErr').textContent = w;
+    else if (/^(Caps Lock|비밀번호가 한글)/.test($('#loginErr').textContent)) $('#loginErr').textContent = '';
+  });
   $('#btnLogout').onclick = async () => { await flush(); await store.logout(); location.reload(); };
   $('#btnReload').onclick = async () => { await flush(); await loadAll(); toast('최신 내용을 불러왔습니다.'); };
   start().catch(e => { document.body.innerHTML = '<div class="card err" style="margin:20px">시작하지 못했습니다: ' + esc(e.message) + '</div>'; });

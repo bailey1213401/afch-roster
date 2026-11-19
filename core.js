@@ -457,6 +457,7 @@ const GEN_SECONDS = { RN: 200, AN: 60 };  // 탐색 시간(초). Apps Script 1�
 const AUTO_COLOR = '#1155cc';  // 자동으로 채운 칸의 글자색. [자동 편성 지우기]는 이 색 칸만 지움.
 const HARD = 100;              // 규칙 위반 1건 점수
 const STAFF_HARD = 400;        // 근무 시간대별 최소 인원·휴일 그룹 구성 위반 1건 점수: 다른 금지 규칙보다 훨씬 먼저 지킴
+const NIGHT_SENIOR = 3000;     // RN 밤번에 시니어(선임 그룹) 0명: 무조건 지킬 규칙이라 어떤 위반보다도 먼저 (2026-11 간호 요청)
 
 function shiftNeeds(input, d) {
   const h = input.days[d].holiday ? 1 : 0, nd = input.need;
@@ -595,11 +596,12 @@ function dayPenalty(m, d, cur) {
       if (!seniorD) pen += HARD;
       if (E < need.Emin) pen += STAFF_HARD * (need.Emin - E) + 10;
       else pen += 10 * Math.abs(E - need.E);
-      if (!gN['시니어']) pen += STAFF_HARD;   // 평일 밤번에도 시니어(선임 그룹) 1명 이상 (휴일은 아래 그룹 구성에서)
+      if (!gN['시니어']) pen += NIGHT_SENIOR;   // 평일 밤번에도 시니어(선임 그룹) 1명 이상
     } else {
       pen += STAFF_HARD * (Math.max(0, need.D - D) + Math.max(0, need.E - E)) +
         HARD * (Math.max(0, D - need.D) + Math.max(0, E - need.E));
       [gD, gE, gN].forEach(g => RN_GROUPS.forEach(name => { if (!g[name]) pen += STAFF_HARD; }));
+      if (!gN['시니어']) pen += NIGHT_SENIOR - STAFF_HARD;   // 휴일 밤번 시니어도 무조건 (위 STAFF_HARD와 합쳐 NIGHT_SENIOR)
       // 휴일 1비·E비: 이미 고정된 1비/E비가 없으면, 이름을 붙일 수 있는(자동 편성 칸) 낮번·초번이 1명 이상 있어야 함
       const canLabel = (fixed, test) => m.people.some((p, i) =>
         (!p.free[d] && cur[i][d] === fixed) || (p.free[d] && !p.trainee && test(cur[i][d])));
@@ -693,6 +695,14 @@ function initialFill(m, cur) {
       cand.sort((a, b) => score(b) - score(a));
       cand.slice(0, Math.max(0, count)).forEach(i => set(i, shift));
     };
+    // RN: 그날 밤번에 시니어가 없으면 시니어 1명을 먼저 넣음 (가장 먼저 지킬 규칙)
+    if (m.input.type === 'RN' && need.N - have.N > 0 &&
+        !m.people.some((p, i) => !p.free[d] && !p.trainee && p.src.group === '시니어' && cur[i][d] === 'N')) {
+      const before = todo.length;
+      pick('N', 1, i => m.people[i].src.group === '시니어' && !m.people[i].officer && excOk(i, 'N') && m.people[i].req.indexOf(d + 1) < 0,
+        i => (prevCode(i, d, 1) === 'N' ? 10 : 0) - nCount[i] + jitter());
+      if (todo.length < before) have.N++;
+    }
     // 밤번은 어제 밤번이던 사람이 이어서 서는 쪽을 먼저 (2~3일 묶음)
     pick('N', need.N - have.N, i => !m.people[i].officer && excOk(i, 'N') && m.people[i].req.indexOf(d + 1) < 0,
       i => (prevCode(i, d, 1) === 'N' ? 10 : 0) - nCount[i] + (m.people[i].exc[d] ? 5 : 0) + hb(i) + jitter());
@@ -743,6 +753,8 @@ function improve(m, cur, seconds) {
   const rnd = n => Math.floor(Math.random() * n);
   // 개인별 예외(대학원·임부 등) 칸은 적힌 근무 밖으로는 아예 바꾸지 않음
   const allowedAt = (i, d, c) => m.people[i].allowed.indexOf(c) >= 0 && (!m.people[i].exc[d] || matchShift(c, m.people[i].exc[d]));
+  // RN 시니어(선임 그룹): 밤번에 시니어가 빠진 날을 골라 고치는 맞바꾸기에 씀
+  const nsIdx = m.input.type === 'RN' ? m.people.map((p, i) => i).filter(i => !m.people[i].trainee && m.people[i].src.group === '시니어') : [];
 
   const start = Date.now(), end = start + seconds * 1000;
   const T0 = 40, T1 = 0.5;
@@ -754,7 +766,31 @@ function improve(m, cur, seconds) {
       T = T0 * Math.pow(T1 / T0, (now - start) / (end - start));
     }
     it++;
-    let ch;
+    let ch = null;
+    if (nsIdx.length && Math.random() < 0.06) {
+      // 밤번 시니어가 없는 날: 그날 밤번인 비시니어와 시니어의 1~5일을 맞바꿈 (밤번 묶음째로 옮기기)
+      const miss = [];
+      for (let d = 0; d < nd; d++) if (!nsIdx.some(i => cur[i][d] === 'N')) miss.push(d);
+      if (miss.length) {
+        const d = miss[rnd(miss.length)];
+        const js = byDay[d].filter(j => cur[j][d] === 'N' && m.people[j].src.group !== '시니어');
+        const is = nsIdx.filter(i => m.people[i].free[d] && allowedAt(i, d, 'N'));
+        if (js.length && is.length) {
+          const i = is[rnd(is.length)], j = js[rnd(js.length)], len = 1 + rnd(5);
+          const d0 = Math.max(0, Math.min(nd - len, d - rnd(len)));
+          let ok = true;
+          ch = [];
+          for (let x = d0; x < d0 + len && ok; x++) {
+            const a = cur[i][x], b = cur[j][x];
+            if (a === b) continue;
+            if (!m.people[i].free[x] || !m.people[j].free[x] || !allowedAt(i, x, b) || !allowedAt(j, x, a)) ok = false;
+            else ch.push([i, x, b], [j, x, a]);
+          }
+          if (!ok || !ch.length) ch = null;
+        }
+      }
+    }
+    if (!ch) {
     const r = Math.random();
     if (r < 0.25) {
       // 두 사람의 연속된 2~5일을 통째로 맞바꿈 (밤번 묶음+휴무를 옮길 때 필요)
@@ -787,6 +823,7 @@ function improve(m, cur, seconds) {
       const opts = m.people[i].allowed.filter(c => c !== cur[i][d] && allowedAt(i, d, c));
       if (!opts.length) continue;
       ch = [[i, d, opts[rnd(opts.length)]]];
+    }
     }
 
     const ps = [], ds = [], old = [];
@@ -1963,7 +2000,7 @@ function ruleRowsRaw(need, offTarget) {
     ['원티드', '신청', '-', '1순위(꼭 필요) · 2순위(되면 좋음) · 3순위(들어주면 고마움), 순위마다 시작·끝 날짜. 근무 날짜 최대 ' + WANT_MAX_DAYS + '일'],
     ['원티드', '1순위 메모', '-', '세부사유를 꼭 적음. 메모는 공개 현황표에 보임'],
     ['원티드', '반영 순서', '-', '겹치면 1순위 → 2순위 → 3순위, 같은 순위면 지난달까지 거절이 많은 사람 먼저'],
-    ['자동 편성', '우선순위', '-', '⓪ 근무 시간대별 최소 인원(밤번 최소 3명 등)·휴일 그룹 구성·매일 밤번 시니어 1명 ①금지 규칙·휴무 개수 (밤번 뒤 2일 휴무, 밤번 간격 ' + NIGHT_GAP + '일, ' + BLOCK_MIN + '일 이상 근무 뒤 2일 휴무, 휴일 1비, 리퀘스트 전날 밤번 금지 포함) ② 원티드 1순위 ③ 연속 근무 최소 ' + BLOCK_MIN + '일·사이 휴무 ' + AFTER_BLOCK_OFF + '일 ④ 원티드 금지 ⑤ 2·3순위 희망 ⑥ 일직 원칙 횟수 ⑦ 리퀘스트 전날 초번 피하기 ⑧ 휴일 근무 균등 ⑨ RN 3N 피하기 (자세한 순서는 [편성 로직] 탭)'],
+    ['자동 편성', '우선순위', '-', '★ RN 매일 밤번에 시니어(선임 그룹) 1명: 무조건, 가장 먼저 ⓪ 근무 시간대별 최소 인원(밤번 최소 3명 등)·휴일 그룹 구성 ①금지 규칙·휴무 개수 (밤번 뒤 2일 휴무, 밤번 간격 ' + NIGHT_GAP + '일, ' + BLOCK_MIN + '일 이상 근무 뒤 2일 휴무, 휴일 1비, 리퀘스트 전날 밤번 금지 포함) ② 원티드 1순위 ③ 연속 근무 최소 ' + BLOCK_MIN + '일·사이 휴무 ' + AFTER_BLOCK_OFF + '일 ④ 원티드 금지 ⑤ 2·3순위 희망 ⑥ 일직 원칙 횟수 ⑦ 리퀘스트 전날 초번 피하기 ⑧ 휴일 근무 균등 ⑨ RN 3N 피하기 (자세한 순서는 [편성 로직] 탭)'],
     ['자동 편성', '거절 보상', '-', '원티드를 못 받은 횟수만큼(최대 ' + BOOST_MAX + '번) 다음 달 원티드를 더 무겁게 봄'],
     ['기록', '근무 부담', '-', '마감 때 [근무 부담 기록]에 밤번·휴일 근무·콜대기·휴무·정기휴가(정 1일, 정A·정P 0.5일)를 쌓고 [근무 부담 요약]에서 누적'],
   ];
