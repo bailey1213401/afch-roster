@@ -195,7 +195,7 @@
 
   const TABS = [
     ['RN', 'RN 근무표'], ['AN', 'AN 근무표'], ['check', '검사결과'], ['wish', '원티드'],
-    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['log', '변경 기록'],
+    ['rules', '규칙·예외'], ['logic', '편성 로직'], ['settings', '설정'], ['log', '변경 기록'], ['help', '사용 설명서'],
   ];
 
   function render() {
@@ -209,9 +209,139 @@
     else if (S.tab === 'logic') v.innerHTML = logicView();
     else if (S.tab === 'settings') v.innerHTML = settingsView();
     else if (S.tab === 'log') { v.innerHTML = '<div class="card">불러오는 중…</div>'; logView(); }
+    else if (S.tab === 'help') v.innerHTML = helpView();
+    if (tour.on) placeTour();
   }
 
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return; S.tab = b.dataset.tab; closePicker(); render(); });
+
+  // ---------------------------------------------------------------- 사용 설명서
+  function helpView() {
+    const sec = (t, body) => '<div class="card help"><h2>' + t + '</h2>' + body + '</div>';
+    return '<div class="bar"><button class="primary" data-act="tour">▶ 따라하기 (화면을 눌러 가며 배우기)</button>' +
+      '<span class="note">처음이면 따라하기를 먼저 해 보세요. 언제든 위쪽 [따라하기] 버튼으로 다시 볼 수 있습니다.</span></div>' +
+      sec('한 달 근무표 만드는 순서',
+        '<ol>' +
+        '<li><b>설정</b> 탭: 연도·월, 공휴일, 필요 인원, 추가 휴무를 확인합니다.</li>' +
+        '<li><b>RN/AN 근무표</b> 탭 → [인원 편집]: 전입·전출, 그룹(시니어·중간·막내·실습), 직책(선임·차선임)을 맞춥니다.</li>' +
+        '<li><b>꼭 들어줘야 하는 것</b>(휴가·교육·확정된 원티드)은 근무표 칸을 눌러 <b>직접 넣습니다</b>. 원티드면 [원티드 순위]도 고릅니다. 이 칸은 자동 편성이 절대 바꾸지 않습니다.</li>' +
+        '<li><b>원티드</b> 탭: "되면 좋은" 희망·금지를 적습니다. 순위가 높을수록 더 잘 지켜 줍니다.</li>' +
+        '<li><b>규칙·예외</b> 탭: 같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다.</li>' +
+        '<li>근무표 탭에서 시간(1분 권장)을 고르고 <b>[RN 자동 편성]</b> / <b>[AN 자동 편성]</b>을 누릅니다. 끝날 때까지 창을 닫지 마세요.</li>' +
+        '<li><b>[규칙 검사]</b>로 빨간 테두리 칸을 확인하고, 칸을 눌러 손으로 고칩니다. 원티드를 바꿨으면 다시 자동 편성을 돌려도 됩니다 (손으로 넣은 칸은 그대로).</li>' +
+        '<li><b>[xlsx 내려받기]</b> → RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.</li>' +
+        '</ol>') +
+      sec('칸 고치기',
+        '<ul><li>칸을 누르면 코드 단추가 뜹니다. 누르면 바로 저장됩니다.</li>' +
+        '<li>원티드로 확정된 칸은 <b>원티드 순위</b>(1·2·3)를 먼저 고르고 코드를 누르세요. 글자 색이 바뀝니다.</li>' +
+        '<li>[지우기]는 빈 칸으로 만듭니다. 빈 칸은 다음 자동 편성 때 채워집니다.</li>' +
+        '<li>맨 왼쪽 회색 5칸은 <b>지난달 마지막 5일</b>입니다. 연속 근무·밤번 뒤 휴무 검사에 쓰입니다.</li></ul>') +
+      sec('글자색·배경색 뜻',
+        '<div class="legend" style="font-size:13px">' +
+        '<span><b style="color:#1155cc">D</b>파란 글씨 = 자동 편성 (다시 돌리면 바뀜)</span>' +
+        '<span><b>D</b>검정 = 직접 넣은 칸 (안 바뀜)</span>' +
+        '<span><b style="color:#cc0000">휴</b>빨강 = 원티드 1순위</span><span><b style="color:#0b5394">휴</b>남색 = 2순위</span><span><b style="color:#38761d">휴</b>초록 = 3순위</span>' +
+        '<span><b style="color:#ff0000;font-weight:700">N</b>밤번</span>' +
+        '<span><b style="background:#ffff00">1</b>콜대기·청</span><span><b style="background:#c9daf8">정</b>휴가</span><span><b style="background:#b6d7a8">교</b>교육·입/출/역</span><span><b style="background:#999999">파</b>파견</span>' +
+        '</div>') +
+      sec('원티드 탭 vs 근무표 칸에 직접 넣기',
+        '<ul><li><b>근무표 칸에 직접</b> = 무조건 지킴. 확정된 휴가·휴무·근무.</li>' +
+        '<li><b>원티드 탭</b> = 가능하면 지킴. 다른 규칙(필요 인원, 밤번 간격 등)과 부딪히면 못 들어줄 수 있습니다. 1순위 &gt; 금지 &gt; 2순위 &gt; 3순위 순으로 지킵니다.</li>' +
+        '<li>원티드 탭 코드는 D·E·N·휴, 여러 개면 쉼표(예: 휴,N). "금지"는 그날 그 근무를 빼 달라는 뜻입니다.</li>' +
+        '<li>원티드를 고친 뒤에는 자동 편성을 다시 돌려야 반영됩니다.</li></ul>') +
+      sec('자동 편성이 지키는 것',
+        '<p class="note" style="margin-top:0">자세한 순서와 점수는 <b>편성 로직</b> 탭에 있습니다. 요약하면:</p>' +
+        '<ul><li>최우선: 근무 시간대별 필요 인원, 매일 밤번 시니어 1명, 휴일 그룹 구성</li>' +
+        '<li>반드시: D→E→N 순서, 밤번 뒤 2일 휴무, 밤번 사이 ' + NIGHT_GAP + '일 이상, 4일 이상 연속 근무 뒤 휴무 2일, 휴무 개수, 휴일 1비·E비</li>' +
+        '<li>되도록: 원티드, 밤번·휴일 근무 고르게</li></ul>' +
+        '<p class="note">오래 돌릴수록(2분, 3분 20초) 결과가 좋아집니다. 위반이 남으면 한 번 더 돌리거나 손으로 고치세요.</p>') +
+      sec('여럿이 같이 쓸 때',
+        '<ul><li>고친 내용은 바로 저장되어 다른 사람 화면에도 반영됩니다. 다른 사람이 고친 걸 보려면 위쪽 <b>[새로고침]</b>을 누르세요.</li>' +
+        '<li>두 사람이 동시에 같은 표를 고치면 먼저 저장된 쪽이 남고, 늦은 쪽에는 "다시 불러옵니다" 안내가 뜹니다. 방금 고친 칸만 다시 넣으면 됩니다.</li>' +
+        '<li>누가 언제 무엇을 바꿨는지는 <b>변경 기록</b> 탭에 남습니다.</li></ul>') +
+      sec('다음 달로 넘어갈 때',
+        '<ul><li><b>설정 → [다음 달 근무표 시작]</b>: 지금 달은 보관되고, 같은 인원으로 빈 근무표가 만들어집니다. 이번 달 마지막 5일은 "전월 말"로 옮겨집니다.</li>' +
+        '<li>원티드 표는 비워집니다. 전출·전역(출·역)한 사람은 자동으로 빠지고, 전입자는 [인원 편집]으로 넣으세요.</li>' +
+        '<li>만약을 위해 가끔 <b>설정 → [백업 파일 내려받기]</b>를 해 두세요. 백업 파일에는 이름이 들어 있으니 공용 PC에 두지 마세요.</li></ul>') +
+      sec('잘 안 될 때',
+        '<ul><li><b>"계속할까요?" 창 없이 아무 일도 안 일어남</b>: 확인 창을 막는 브라우저입니다. 크롬이나 엣지로 여세요.</li>' +
+        '<li><b>자동 편성 중 멈춘 것 같음</b>: 고른 시간이 다 될 때까지 기다리세요. 창을 닫거나 새로고침하면 처음부터 다시 해야 합니다.</li>' +
+        '<li><b>다른 사람이 고친 게 안 보임</b>: [새로고침]을 누르세요.</li>' +
+        '<li><b>로그인이 안 됨</b>: 아이디(이메일)와 비밀번호를 확인하세요. 계정은 관리자가 Supabase에서 만듭니다.</li></ul>');
+  }
+
+  // ---------------------------------------------------------------- 따라하기
+  const TOUR = [
+    { tab: 'RN', sel: '#tabs', title: '위쪽 탭', text: '근무표, 원티드, 검사결과, 설정 등이 탭으로 나뉘어 있습니다. 누르면 화면이 바뀝니다.' },
+    { tab: 'RN', sel: 'table.grid td.cell[data-d]', title: '칸 고치기', text: '근무표 칸을 누르면 코드 단추가 뜹니다. 지금 아무 칸이나 눌러 보세요 (닫기를 누르면 그대로).<br>확정된 원티드는 [원티드 순위]를 고르고 코드를 누르면 색 글씨로 들어가고, 자동 편성이 바꾸지 않습니다.' },
+    { tab: 'RN', sel: '.legend', title: '글자색 뜻', text: '파란 글씨 = 자동 편성, 검정 = 직접 넣음, 빨강·남색·초록 = 원티드 1·2·3순위.<br>자동 편성을 다시 돌리면 <b>파란 글씨만</b> 바뀝니다.' },
+    { tab: 'RN', sel: '[data-act="staff"]', title: '인원 편집', text: '전입·전출, 그룹(시니어·중간·막내), 선임·차선임을 여기서 고칩니다.' },
+    { tab: 'wish', sel: '#view table.list', title: '원티드', text: '"되면 좋은" 희망·금지 목록입니다. 칸을 바로 고치면 저장됩니다.<br>[줄 추가]로 새 원티드를 넣고, 날짜·코드·순위를 고르세요.' },
+    { tab: 'rules', sel: '#view', title: '규칙·예외', text: '같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다. 다음 자동 편성부터 적용됩니다.' },
+    { tab: 'RN', sel: '#genSec', title: '편성 시간 고르기', text: '오래 돌릴수록 결과가 좋습니다. 보통 1분, 위반이 남으면 2분 이상.' },
+    { tab: 'RN', sel: '[data-act="generate"]', title: '자동 편성', text: '누르면 파란 글씨 칸을 지우고 새로 짭니다. 직접 넣은 칸과 원티드는 그대로입니다.<br>지금 눌러 봐도 됩니다. 끝날 때까지 창을 닫지 마세요.' },
+    { tab: 'RN', sel: '[data-act="check"]', title: '규칙 검사', text: '문제가 있는 칸에 빨간 테두리가 생깁니다. 마우스를 올리면 이유가 보입니다.' },
+    { tab: 'check', sel: '#view', title: '검사결과', text: 'RN·AN 문제를 한눈에 봅니다. 줄을 누르면 해당 근무표로 갑니다.' },
+    { tab: 'RN', sel: '[data-act="xlsx"]', title: 'xlsx 내려받기', text: 'RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.' },
+    { tab: 'settings', sel: '#view .card:nth-of-type(4)', title: '다음 달 시작', text: '한 달이 끝나면 여기서 다음 달 근무표를 시작합니다. 지금 달은 보관됩니다.' },
+    { tab: 'RN', sel: '#btnReload', title: '새로고침', text: '다른 사람이 고친 내용을 불러옵니다. 여럿이 같이 쓸 때 눌러 주세요.' },
+    { tab: 'help', sel: '#tabs button[data-tab="help"]', title: '끝', text: '자세한 설명은 [사용 설명서] 탭에 있습니다. 위쪽 [따라하기] 버튼으로 언제든 다시 볼 수 있습니다.' },
+  ];
+  const tour = { on: false, i: 0, spot: null, box: null };
+  function startTour() {
+    closePicker();
+    tour.on = true; tour.i = 0;
+    if (!tour.spot) {
+      tour.spot = document.createElement('div'); tour.spot.className = 'tour-spot'; document.body.appendChild(tour.spot);
+      tour.box = document.createElement('div'); tour.box.className = 'tour-box'; document.body.appendChild(tour.box);
+      tour.box.addEventListener('click', e => {
+        const b = e.target.closest('[data-tour]'); if (!b) return;
+        const a = b.dataset.tour;
+        if (a === 'end') endTour();
+        else { tour.i += a === 'next' ? 1 : -1; if (tour.i >= TOUR.length) endTour(); else showTour(); }
+      });
+      window.addEventListener('resize', () => { if (tour.on) placeTour(); });
+      window.addEventListener('scroll', () => { if (tour.on) placeTour(); }, true);
+    }
+    showTour();
+  }
+  function endTour() {
+    tour.on = false;
+    if (tour.spot) { tour.spot.style.display = 'none'; tour.box.style.display = 'none'; }
+    try { localStorage.setItem('afch-roster:tourDone', '1'); } catch (e) { /* 저장 안 돼도 됨 */ }
+  }
+  function showTour() {
+    const st = TOUR[tour.i];
+    if (S.tab !== st.tab) { S.tab = st.tab; closePicker(); render(); }
+    const t = document.querySelector(st.sel) || $('#view');
+    t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    tour.box.innerHTML = '<div class="tour-step">' + (tour.i + 1) + ' / ' + TOUR.length + '</div><div class="tour-title">' + st.title + '</div><div>' + st.text + '</div>' +
+      '<div class="bar" style="margin:12px 0 0"><button data-tour="end">그만</button><span class="sp"></span>' +
+      (tour.i ? '<button data-tour="prev">이전</button>' : '') +
+      '<button class="primary" data-tour="next">' + (tour.i === TOUR.length - 1 ? '끝내기' : '다음') + '</button></div>';
+    tour.spot.style.display = 'block'; tour.box.style.display = 'block';
+    placeTour();
+  }
+  function placeTour() {
+    if (!tour.on) return;
+    const st = TOUR[tour.i];
+    const t = document.querySelector(st.sel) || $('#view');
+    const r = t.getBoundingClientRect(), pad = 4;
+    const vh = window.innerHeight, vw = window.innerWidth;
+    const top = Math.max(0, r.top - pad), left = Math.max(0, r.left - pad);
+    const h = Math.min(vh - top, r.height + pad * 2), w = Math.min(vw - left, r.width + pad * 2);
+    Object.assign(tour.spot.style, { top: top + 'px', left: left + 'px', width: w + 'px', height: h + 'px' });
+    const bw = Math.min(340, vw - 16);
+    tour.box.style.width = bw + 'px';
+    const bh = tour.box.offsetHeight;
+    let bt = top + h + 10, bl = Math.min(vw - bw - 8, Math.max(8, left));
+    if (h > vh * 0.5) { bt = Math.min(vh - bh - 8, Math.max(8, top) + 60); bl = vw - bw - 24; }   // 큰 영역은 오른쪽 위에
+    else {
+      if (bt + bh > vh - 8) bt = top - bh - 10;
+      if (bt < 8) bt = Math.max(8, vh - bh - 8);
+    }
+    tour.box.style.top = bt + 'px'; tour.box.style.left = bl + 'px';
+  }
 
   // ---------------------------------------------------------------- 근무표
   function cellStyle(code, meta) {
@@ -398,6 +528,7 @@
     else if (act === 'delRule') { S.config[el.dataset.list].splice(Number(el.dataset.i), 1); markDirty('config'); render(); }
     else if (act === 'addHoliday') { S.config.holidays.push({ date: '', name: '' }); markDirty('config'); render(); }
     else if (act === 'delHoliday') { S.config.holidays.splice(Number(el.dataset.i), 1); markDirty('config'); render(); }
+    else if (act === 'tour') startTour();
     else if (act === 'newMonth') newMonth();
     else if (act === 'importJson') $('#importFile').click();
     else if (act === 'exportJson') exportJson();
@@ -778,7 +909,11 @@
     $('#who').textContent = S.user;
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     await loadAll();
+    let seen = '1';
+    try { seen = localStorage.getItem('afch-roster:tourDone'); } catch (e) { /* 무시 */ }
+    if (!seen) startTour();
   }
+  $('#btnTour').onclick = () => startTour();
   $('#btnLogin').onclick = async () => {
     $('#loginErr').textContent = '';
     try { await store.login($('#email').value.trim(), $('#pw').value); $('#pw').value = ''; await start(); }
