@@ -279,7 +279,7 @@
         '<li>근무표 탭에서 <b>[RN 자동 편성]</b> / <b>[AN 자동 편성]</b>을 누릅니다. 남은 시간이 표시되고, 끝날 때까지 창을 닫지 마세요.</li>' +
         '<li>끝나면 <b>점검 결과</b> 창이 뜹니다. 마음에 안 드는 줄에 체크하고 이유를 적어 <b>[관리자에게 보내기]</b>를 누르면, 관리자가 [피드백] 탭에서 보고 편성 규칙을 고칩니다.</li>' +
         '<li><b>[규칙 검사]</b>로 빨간 테두리 칸을 확인하고, 칸을 눌러 손으로 고칩니다. 원티드를 바꿨으면 다시 자동 편성을 돌려도 됩니다 (손으로 넣은 칸은 그대로).</li>' +
-        '<li><b>[xlsx 내려받기]</b> → RN·AN·검사결과·편성 로직 4개 탭이 든 파일이 받아집니다. 메일에 첨부하세요.</li>' +
+        '<li><b>[xlsx 내려받기]</b> → RN·AN·검사결과·편성 로직 4개 탭이 든 파일. <b>[내려받기만]</b> 또는 <b>[내려받고 메일 보내기]</b>(받는 주소는 바꿀 수 있음, 여러 명은 쉼표)를 고릅니다.</li>' +
         '</ol>') +
       sec('칸 고치기',
         '<ul><li>칸을 누르면 코드 단추가 뜹니다. 누르면 바로 저장됩니다.</li>' +
@@ -598,7 +598,6 @@
     else if (act === 'fbJson') fbJson();
     else if (act === 'staff') staffEditor(type);
     else if (act === 'paste') pasteDialog(type);
-    else if (act === 'makeView') makeViewFile();
     else if (act === 'xlsx') exportXlsx();
     else if (act === 'checkAll') { TYPES.forEach(runCheck); render(); }
     else if (act === 'goto') { S.tab = el.dataset.type; render(); }
@@ -1140,48 +1139,8 @@
     h += '<div class="card"><h2>데이터 백업·가져오기</h2><p class="note">백업 파일에는 이름과 근무가 들어 있습니다. 공용 PC나 인터넷에 올리지 마세요.</p><div class="bar">' +
       '<button data-act="exportJson">백업 파일 내려받기</button><button data-act="importJson">백업 파일로 덮어쓰기</button>' +
       '<input type="file" id="importFile" accept=".json,application/json" class="hidden"></div></div>';
-    h += '<div class="card"><h2>보기 전용 페이지 (국방망 등 로그인이 막힌 곳용)</h2>' +
-      '<p class="note">지금 RN·AN 근무표를 <b>암호를 건 파일</b>(view-data.json)로 만듭니다. 이 파일을 GitHub에 올리면 <b>' + esc(viewLink()) + '</b> 에서 비밀번호를 넣고 볼 수만 있습니다 (고치기 불가).<br>' +
-      '인터넷에는 알아볼 수 없는 암호문만 올라갑니다. 비밀번호는 <b>12자 이상</b>, 추측하기 어렵게 정하고 필요한 사람에게만 알려 주세요. 비밀번호는 어디에도 저장되지 않으니 잊지 않게 따로 보관하세요.<br>' +
-      '근무표가 바뀌면 다시 만들어 올려야 반영됩니다.</p>' +
-      '<div class="bar"><input id="viewPw1" type="password" placeholder="보기 비밀번호 (12자 이상)" autocomplete="new-password" style="flex:1 1 200px">' +
-      '<input id="viewPw2" type="password" placeholder="한 번 더" autocomplete="new-password" style="flex:1 1 160px">' +
-      '<button class="primary" data-act="makeView">보기용 파일 만들기</button></div><div class="err" id="viewErr"></div></div>';
     setTimeout(() => { const f = $('#importFile'); if (f) f.onchange = importJson; }, 0);
     return h;
-  }
-  // ---------------------------------------------------------------- 보기 전용 파일 (암호화)
-  const viewLink = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'view.html';
-  const b64 = buf => { let s = ''; new Uint8Array(buf).forEach(b => { s += String.fromCharCode(b); }); return btoa(s); };
-  async function makeViewFile() {
-    const a = $('#viewPw1').value, b = $('#viewPw2').value;
-    $('#viewErr').textContent = '';
-    if (a.length < 12) { $('#viewErr').textContent = '비밀번호는 12자 이상으로 정해 주세요.'; return; }
-    if (a !== b) { $('#viewErr').textContent = '두 칸이 다릅니다.'; return; }
-    if (!window.crypto || !crypto.subtle) { $('#viewErr').textContent = '이 브라우저에서는 암호화를 할 수 없습니다. 크롬·엣지 최신판으로 열어 주세요.'; return; }
-    busy('보기용 파일 만드는 중…');
-    try {
-      const days = monthDays();
-      const pack = t => S.rosters[t].staff.filter(p => p.group !== '실습' || p.codes.some(Boolean))
-        .map(p => ({ group: p.group, name: p.name, codes: p.codes.slice(0, days.length) }));
-      const payload = {
-        title: CFG.TITLE || '응급실 간호 근무표', year: S.config.year, month: S.config.month, made: new Date().toISOString(),
-        days: days.map(x => ({ day: x.day, weekday: x.weekday, holiday: x.holiday, holName: x.holName })),
-        RN: pack('RN'), AN: pack('AN'), colors: CODE_COLORS,
-      };
-      const ITER = 310000;
-      const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(a), 'PBKDF2', false, ['deriveKey']);
-      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ITER, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
-      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(payload)));
-      const file = { format: 'afch-view-1', kdf: 'PBKDF2-SHA256', iter: ITER, salt: b64(salt), iv: b64(iv), data: b64(ct) };
-      download('view-data.json', new Blob([JSON.stringify(file)], { type: 'application/json' }));
-      $('#viewPw1').value = ''; $('#viewPw2').value = '';
-      log('config', '보기용 파일 만들기 (' + monthKey() + ')');
-      $('#viewErr').innerHTML = '<span style="color:var(--ok)">view-data.json 파일을 받았습니다. GitHub 업로드 화면에 이 파일을 올리면 1~2분 뒤 보기 페이지에 반영됩니다.<br>' +
-        '파일 이름이 "view-data (1).json"처럼 바뀌었으면 <b>view-data.json</b>으로 고쳐서 올리세요.</span>';
-    } catch (e) { $('#viewErr').textContent = '만들지 못했습니다: ' + e.message; }
-    finally { idle(); }
   }
   function onSettingChange(t) {
     const c = S.config;
@@ -1263,8 +1222,54 @@
   }
 
   // ---------------------------------------------------------------- xlsx
+  // xlsx: [내려받기만] / [내려받고 메일 보내기]
+  const MAIL_DEFAULT = 'afch86@mnd.go.kr';
   function exportXlsx() {
     if (!window.XLSX) { alert('xlsx 도구를 불러오지 못했습니다.'); return; }
+    closePicker();
+    const el = document.createElement('div');
+    el.className = 'overlay'; el.style.zIndex = 65;
+    el.innerHTML = '<div class="box" style="text-align:left;width:min(460px,94vw)">' +
+      '<h2 style="margin:0 0 6px;font-size:16px">xlsx 내려받기</h2>' +
+      '<p class="note" style="margin:0 0 10px">RN·AN·검사결과·편성 로직 4개 탭이 든 파일입니다.</p>' +
+      '<label style="display:block;margin-bottom:4px"><b>메일 받는 주소</b> <span class="note">(여러 명은 쉼표로)</span></label>' +
+      '<input id="mailTo" type="text" value="' + esc(MAIL_DEFAULT) + '" style="width:100%" autocomplete="email">' +
+      '<div class="err" id="mailErr"></div>' +
+      '<div class="bar" style="margin:14px 0 0;justify-content:flex-end">' +
+      '<button data-b="close">닫기</button><button data-b="dl">내려받기만</button><button class="primary" data-b="mail">내려받고 메일 보내기</button></div></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', async e => {
+      const b = e.target.closest('button[data-b]'); if (!b) return;
+      if (b.dataset.b === 'close') { el.remove(); return; }
+      if (b.dataset.b === 'dl') { const x = buildXlsx(); XLSX.writeFile(x.wb, x.name); log('config', 'xlsx 내려받기: ' + x.name); el.remove(); return; }
+      const to = $('#mailTo').value.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+      if (!to.length || to.length > 5 || !to.every(s => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s))) { $('#mailErr').textContent = '메일 주소를 확인해 주세요. (최대 5개, 쉼표로 구분)'; return; }
+      if (store.local) { $('#mailErr').textContent = '시험 모드(이 PC에만 저장)에서는 메일을 보낼 수 없습니다.'; return; }
+      el.querySelectorAll('button').forEach(x => { x.disabled = true; });
+      const x = buildXlsx();
+      XLSX.writeFile(x.wb, x.name);
+      busy('메일 보내는 중…', to.join(', '));
+      try {
+        const file = XLSX.write(x.wb, { bookType: 'xlsx', type: 'base64' });
+        const subject = x.name.replace(/\.xlsx$/, '');
+        const body = S.config.year % 100 + '년 ' + S.config.month + '월 응급실 간호 근무표를 보내드립니다.\n\n첨부: ' + x.name +
+          ' (RN·AN 근무표 + 검사결과 + 편성 로직 탭)\n규칙 검사: 위반 ' + x.hard + '건, 주의 ' + x.warn + '건\n\n보낸 사람: ' + S.user + ' (응급실 근무표 홈페이지)';
+        const { data, error } = await store.sb.functions.invoke('send-roster', { body: { to, subject, body, filename: x.name, file } });
+        if (error) throw error;
+        if (!data || !data.ok) throw new Error((data && data.error) || '알 수 없는 오류');
+        log('config', 'xlsx 메일 발송 → ' + to.join(', ') + ' (' + x.name + ')');
+        el.remove(); toast(to.join(', ') + ' 로 보냈습니다.');
+      } catch (err) {
+        let m = String((err && err.message) || err);
+        if (err && err.context && err.context.json) { try { const j = await err.context.json(); m = j.error || j.message || m; } catch (z) { /* 무시 */ } }
+        $('#mailErr').innerHTML = '파일은 내려받았지만 메일은 보내지 못했습니다.<br><span class="note">' + esc(m) +
+          (/not found|404|failed to send a request/i.test(m) ? ' — 메일 보내기 설정(Supabase 함수)이 아직 안 됐을 수 있습니다. 관리자에게 알려 주세요.' : '') + '</span>';
+        el.querySelectorAll('button').forEach(z => { z.disabled = false; });
+      } finally { idle(); }
+    });
+  }
+
+  function buildXlsx() {
     TYPES.forEach(runCheck);
     const wb = XLSX.utils.book_new();
     const days = monthDays();
@@ -1323,8 +1328,9 @@
     XLSX.utils.book_append_sheet(wb, wsL, '편성 로직');
 
     const name = '[AFCH 응급실] 간호 근무표 ' + String(S.config.year).slice(-2) + '년 ' + S.config.month + '월 (' + stamp() + ').xlsx';
-    XLSX.writeFile(wb, name);
-    log('config', 'xlsx 내려받기: ' + name);
+    const all = TYPES.reduce((a, t) => a.concat(S.check[t] || []), []);
+    const hard = all.filter(f => f.level === '위반').length;
+    return { wb, name, hard, warn: all.length - hard };
   }
 
   // ---------------------------------------------------------------- 버전 (되돌리기용 저장본)
@@ -1361,7 +1367,7 @@
   }
   $('#view').addEventListener('focusin', e => {
     if (editAsked || !e.target.matches('input, select, textarea')) return;
-    if (['genSec', 'wishLink', 'importFile', 'viewPw1', 'viewPw2'].indexOf(e.target.id) >= 0) return;
+    if (['genSec', 'wishLink', 'importFile'].indexOf(e.target.id) >= 0) return;
     beforeEdit();
   });
 
