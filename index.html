@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>응급실 근무표</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1f2328; --muted: #6a737d; --line: #d0d7de;
+    --head: #e8eef7; --accent: #2457c5; --danger: #c62828; --warn: #b26a00; --ok: #2e7d32;
+    --hol: #fcefef;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, select, input { font: inherit; }
+  button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #f0f3f7; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #1c47a3; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; background: #fff; }
+  .hidden { display: none !important; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .month { font-weight: 700; color: var(--accent); }
+  header .sp { flex: 1; }
+  header .who { color: var(--muted); font-size: 13px; }
+  .mode { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #fff3cd; color: #7a5b00; }
+
+  nav { display: flex; gap: 2px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    overflow-x: auto; position: sticky; top: 49px; z-index: 29; }
+  nav button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 14px; white-space: nowrap; background: none; }
+  nav button.on { border-bottom-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+  main { padding: 14px 16px 60px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .bar .sp { flex: 1; }
+  .note { color: var(--muted); font-size: 13px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+
+  /* 근무표 */
+  .gridwrap { overflow: auto; max-height: calc(100vh - 190px); border: 1px solid var(--line); background: #fff; border-radius: 6px; }
+  table.grid { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  table.grid th, table.grid td { border-right: 1px solid #e3e6ea; border-bottom: 1px solid #e3e6ea; text-align: center;
+    padding: 0; height: 26px; min-width: 30px; }
+  table.grid thead th { position: sticky; background: var(--head); z-index: 3; font-weight: 600; }
+  table.grid thead tr:nth-child(1) th { top: 0; }
+  table.grid thead tr:nth-child(2) th { top: 26px; }
+  table.grid thead tr:nth-child(3) th { top: 52px; }
+  table.grid th.hol, table.grid td.hol { background-color: var(--hol); }
+  table.grid thead th.hol { background: #f6d5d5; color: #b00020; }
+  table.grid .stick { position: sticky; left: 0; z-index: 2; background: #fff; text-align: left; padding: 0 6px; white-space: nowrap; }
+  table.grid .stick2 { position: sticky; z-index: 2; background: #fff; text-align: left; padding: 0 6px; white-space: nowrap; }
+  table.grid thead .stick, table.grid thead .stick2 { z-index: 4; background: var(--head); }
+  table.grid td.prev { background: #f0f0f0; color: #555; }
+  table.grid td.cell { cursor: pointer; }
+  table.grid td.cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  table.grid td.bad { box-shadow: inset 0 0 0 2px var(--danger); }
+  table.grid td.warn { box-shadow: inset 0 0 0 2px #e69138; }
+  table.grid th.bad { box-shadow: inset 0 0 0 2px var(--danger); }
+  table.grid tr.sum td { background: #fafbfc; color: #444; font-size: 12px; }
+  table.grid tr.sum td.short { color: var(--danger); font-weight: 700; }
+  table.grid tr.grp td { border-top: 2px solid #b9c2cc; }
+  .cnt { font-size: 12px; color: var(--muted); }
+
+  /* 칸 고르기 */
+  .picker { position: fixed; z-index: 50; background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 10px; width: 300px; }
+  .picker .codes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .picker .codes button { padding: 6px 0; }
+  .picker .row { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .picker .title { font-weight: 700; margin-bottom: 6px; }
+
+  table.list { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.list th, table.list td { border-bottom: 1px solid #e3e6ea; padding: 6px 8px; text-align: left; vertical-align: top; }
+  table.list th { background: var(--head); position: sticky; top: 0; }
+  table.list td input, table.list td select { width: 100%; }
+  .lv-위반 { color: var(--danger); font-weight: 700; }
+  .lv-주의 { color: var(--warn); font-weight: 700; }
+  .lv-금지 { color: var(--danger); font-weight: 700; }
+  .lv-지양 { color: var(--warn); }
+
+  .login { max-width: 360px; margin: 12vh auto; }
+  .login input { width: 100%; margin-bottom: 8px; padding: 9px 10px; }
+  .login button { width: 100%; padding: 9px; }
+  .err { color: var(--danger); margin-top: 8px; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(255,255,255,.75); z-index: 60; display: flex; align-items: center; justify-content: center; }
+  .overlay .box { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 22px 28px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.12); }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 8px 16px; border-radius: 6px; z-index: 70; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend span b { display: inline-block; min-width: 22px; text-align: center; border: 1px solid #ddd; margin-right: 3px; }
+  @media (max-width: 700px) { main { padding: 10px 8px 60px; } header { padding: 8px; } nav { top: 0; position: static; } }
+</style>
+</head>
+<body>
+<div id="login" class="login card hidden">
+  <h2>응급실 근무표 로그인</h2>
+  <input id="email" type="email" placeholder="아이디(이메일)" autocomplete="username">
+  <input id="pw" type="password" placeholder="비밀번호" autocomplete="current-password">
+  <button class="primary" id="btnLogin">로그인</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1 id="appTitle">응급실 간호 근무표</h1>
+    <span class="month" id="monthLabel"></span>
+    <span class="mode hidden" id="modeTag">이 PC에만 저장 (시험 모드)</span>
+    <span class="sp"></span>
+    <span class="who" id="who"></span>
+    <button id="btnReload" title="다른 사람이 고친 내용 다시 불러오기">새로고침</button>
+    <button id="btnLogout">로그아웃</button>
+  </header>
+  <nav id="tabs"></nav>
+  <main id="view"></main>
+</div>
+
+<div id="overlay" class="overlay hidden"><div class="box"><div id="overlayText">작업 중…</div><div class="note" id="overlaySub"></div></div></div>
+
+<script src="vendor/supabase.min.js"></script>
+<script src="vendor/xlsx.bundle.js"></script>
+<script src="config.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
