@@ -598,6 +598,7 @@
     else if (act === 'fbJson') fbJson();
     else if (act === 'staff') staffEditor(type);
     else if (act === 'paste') pasteDialog(type);
+    else if (act === 'makeView') makeViewFile();
     else if (act === 'xlsx') exportXlsx();
     else if (act === 'checkAll') { TYPES.forEach(runCheck); render(); }
     else if (act === 'goto') { S.tab = el.dataset.type; render(); }
@@ -1139,8 +1140,48 @@
     h += '<div class="card"><h2>데이터 백업·가져오기</h2><p class="note">백업 파일에는 이름과 근무가 들어 있습니다. 공용 PC나 인터넷에 올리지 마세요.</p><div class="bar">' +
       '<button data-act="exportJson">백업 파일 내려받기</button><button data-act="importJson">백업 파일로 덮어쓰기</button>' +
       '<input type="file" id="importFile" accept=".json,application/json" class="hidden"></div></div>';
+    h += '<div class="card"><h2>보기 전용 페이지 (국방망 등 로그인이 막힌 곳용)</h2>' +
+      '<p class="note">지금 RN·AN 근무표를 <b>암호를 건 파일</b>(view-data.json)로 만듭니다. 이 파일을 GitHub에 올리면 <b>' + esc(viewLink()) + '</b> 에서 비밀번호를 넣고 볼 수만 있습니다 (고치기 불가).<br>' +
+      '인터넷에는 알아볼 수 없는 암호문만 올라갑니다. 비밀번호는 <b>12자 이상</b>, 추측하기 어렵게 정하고 필요한 사람에게만 알려 주세요. 비밀번호는 어디에도 저장되지 않으니 잊지 않게 따로 보관하세요.<br>' +
+      '근무표가 바뀌면 다시 만들어 올려야 반영됩니다.</p>' +
+      '<div class="bar"><input id="viewPw1" type="password" placeholder="보기 비밀번호 (12자 이상)" autocomplete="new-password" style="flex:1 1 200px">' +
+      '<input id="viewPw2" type="password" placeholder="한 번 더" autocomplete="new-password" style="flex:1 1 160px">' +
+      '<button class="primary" data-act="makeView">보기용 파일 만들기</button></div><div class="err" id="viewErr"></div></div>';
     setTimeout(() => { const f = $('#importFile'); if (f) f.onchange = importJson; }, 0);
     return h;
+  }
+  // ---------------------------------------------------------------- 보기 전용 파일 (암호화)
+  const viewLink = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'view.html';
+  const b64 = buf => { let s = ''; new Uint8Array(buf).forEach(b => { s += String.fromCharCode(b); }); return btoa(s); };
+  async function makeViewFile() {
+    const a = $('#viewPw1').value, b = $('#viewPw2').value;
+    $('#viewErr').textContent = '';
+    if (a.length < 12) { $('#viewErr').textContent = '비밀번호는 12자 이상으로 정해 주세요.'; return; }
+    if (a !== b) { $('#viewErr').textContent = '두 칸이 다릅니다.'; return; }
+    if (!window.crypto || !crypto.subtle) { $('#viewErr').textContent = '이 브라우저에서는 암호화를 할 수 없습니다. 크롬·엣지 최신판으로 열어 주세요.'; return; }
+    busy('보기용 파일 만드는 중…');
+    try {
+      const days = monthDays();
+      const pack = t => S.rosters[t].staff.filter(p => p.group !== '실습' || p.codes.some(Boolean))
+        .map(p => ({ group: p.group, name: p.name, codes: p.codes.slice(0, days.length) }));
+      const payload = {
+        title: CFG.TITLE || '응급실 간호 근무표', year: S.config.year, month: S.config.month, made: new Date().toISOString(),
+        days: days.map(x => ({ day: x.day, weekday: x.weekday, holiday: x.holiday, holName: x.holName })),
+        RN: pack('RN'), AN: pack('AN'), colors: CODE_COLORS,
+      };
+      const ITER = 310000;
+      const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(a), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ITER, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(payload)));
+      const file = { format: 'afch-view-1', kdf: 'PBKDF2-SHA256', iter: ITER, salt: b64(salt), iv: b64(iv), data: b64(ct) };
+      download('view-data.json', new Blob([JSON.stringify(file)], { type: 'application/json' }));
+      $('#viewPw1').value = ''; $('#viewPw2').value = '';
+      log('config', '보기용 파일 만들기 (' + monthKey() + ')');
+      $('#viewErr').innerHTML = '<span style="color:var(--ok)">view-data.json 파일을 받았습니다. GitHub 업로드 화면에 이 파일을 올리면 1~2분 뒤 보기 페이지에 반영됩니다.<br>' +
+        '파일 이름이 "view-data (1).json"처럼 바뀌었으면 <b>view-data.json</b>으로 고쳐서 올리세요.</span>';
+    } catch (e) { $('#viewErr').textContent = '만들지 못했습니다: ' + e.message; }
+    finally { idle(); }
   }
   function onSettingChange(t) {
     const c = S.config;
@@ -1320,7 +1361,7 @@
   }
   $('#view').addEventListener('focusin', e => {
     if (editAsked || !e.target.matches('input, select, textarea')) return;
-    if (e.target.id === 'genSec' || e.target.id === 'wishLink' || e.target.id === 'importFile') return;
+    if (['genSec', 'wishLink', 'importFile', 'viewPw1', 'viewPw2'].indexOf(e.target.id) >= 0) return;
     beforeEdit();
   });
 

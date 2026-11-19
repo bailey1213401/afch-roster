@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>근무표 보기</title>
+<style>
+  :root { --bg: #fff5f9; --ink: #3a2530; --muted: #8a6b78; --line: #f1cfdc; --head: #fde6ef; --accent: #e0457b; --accent-d: #c2336a; --danger: #c62828; --hol: #fff0f0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, input { font: inherit; }
+  button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  input { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: #fff; }
+  .hidden { display: none !important; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+  .login { max-width: 360px; margin: 12vh auto; text-align: center; }
+  .login input, .login button { width: 100%; margin-bottom: 8px; }
+  .mascot { width: 80px; height: 80px; object-fit: contain; }
+  .note { color: var(--muted); font-size: 13px; }
+  .err { color: var(--danger); margin-top: 6px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #fff; border-bottom: 3px solid #f8b9cf; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; color: var(--accent-d); }
+  header .sp { flex: 1; }
+  nav { display: flex; gap: 2px; padding: 0 10px; background: #fff; border-bottom: 1px solid var(--line); }
+  nav button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 14px; background: none; }
+  nav button.on { border-bottom-color: var(--accent); color: var(--accent); font-weight: 700; }
+  main { padding: 12px 14px 40px; }
+  .gridwrap { overflow: auto; max-height: calc(100vh - 170px); border: 1px solid var(--line); background: #fff; border-radius: 6px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  table { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  th, td { border-right: 1px solid #e3e6ea; border-bottom: 1px solid #e3e6ea; text-align: center; padding: 0; height: 26px; min-width: 30px; }
+  thead th { position: sticky; background: var(--head); z-index: 3; font-weight: 600; }
+  thead tr:nth-child(1) th { top: 0; }
+  thead tr:nth-child(2) th { top: 26px; }
+  th.hol, td.hol { background-color: var(--hol); }
+  thead th.hol { background: #f6d5d5; color: #b00020; }
+  .nm { position: sticky; left: 0; z-index: 2; background: #fff; text-align: left; padding: 0 6px; white-space: nowrap; }
+  thead .nm { z-index: 4; background: var(--head); }
+  tr.grp td { border-top: 2px solid #b9c2cc; }
+  .g { color: var(--muted); font-size: 11px; margin-right: 4px; }
+  tr.me td { background: #fff8d6; }
+  tr.me td.nm { background: #fff1a8; }
+  @media (max-width: 700px) {
+    main { padding: 8px 6px 40px; }
+    table { font-size: 12px; }
+    th, td { min-width: 26px; height: 28px; }
+    .nm { max-width: 96px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; padding: 0 4px; }
+    .g { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="lock" class="login card">
+  <img class="mascot" src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
+  <h2 style="color:var(--accent-d);margin:6px 0 4px">근무표 보기</h2>
+  <p class="note" style="margin:0 0 12px">보기 전용입니다. 관리자에게 받은 <b>보기 비밀번호</b>를 넣으세요.</p>
+  <input id="pw" type="password" placeholder="보기 비밀번호" autocomplete="current-password">
+  <button class="primary" id="btnOpen">열기</button>
+  <div class="err" id="err"></div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <img class="mascot" style="width:34px;height:34px" src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
+    <h1 id="title"></h1><b id="month" style="color:var(--accent)"></b>
+    <span class="sp"></span>
+    <input id="find" placeholder="이름 찾기" style="padding:5px 8px;width:120px">
+    <button id="btnLock">잠그기</button>
+  </header>
+  <nav id="tabs"><button data-t="RN" class="on">RN 근무표</button><button data-t="AN">AN 근무표</button></nav>
+  <main>
+    <div class="note" id="made" style="margin-bottom:6px"></div>
+    <div class="gridwrap" id="grid"></div>
+  </main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const WK = ['일', '월', '화', '수', '목', '금', '토'];
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  let D = null, tab = 'RN';
+
+  async function open() {
+    const pw = $('#pw').value;
+    $('#err').textContent = '';
+    if (!pw) return;
+    if (!window.crypto || !crypto.subtle) { $('#err').textContent = '이 브라우저에서는 열 수 없습니다. 크롬이나 엣지 최신판으로 열어 주세요.'; return; }
+    $('#btnOpen').disabled = true; $('#btnOpen').textContent = '여는 중…';
+    try {
+      const res = await fetch('view-data.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status === 404 ? 'nofile' : 'HTTP ' + res.status);
+      const f = await res.json();
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: unb64(f.salt), iterations: f.iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      let plain;
+      try { plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(f.iv) }, key, unb64(f.data)); }
+      catch (e) { throw new Error('badpw'); }
+      D = JSON.parse(new TextDecoder().decode(plain));
+      $('#pw').value = '';
+      show();
+    } catch (e) {
+      $('#err').textContent = e.message === 'badpw' ? '비밀번호가 틀립니다.' :
+        e.message === 'nofile' ? '아직 올라온 근무표가 없습니다. 관리자에게 알려 주세요.' : '열지 못했습니다: ' + e.message;
+    } finally { $('#btnOpen').disabled = false; $('#btnOpen').textContent = '열기'; }
+  }
+
+  function show() {
+    $('#lock').classList.add('hidden'); $('#app').classList.remove('hidden');
+    $('#title').textContent = D.title || '근무표';
+    $('#month').textContent = D.year + '년 ' + D.month + '월';
+    document.title = D.month + '월 근무표 보기';
+    $('#made').textContent = '보기 전용 · ' + new Date(D.made).toLocaleString('ko-KR') + ' 기준 (이후 바뀐 내용은 관리자가 다시 올려야 보입니다)';
+    render();
+  }
+
+  function render() {
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+    const days = D.days, staff = D[tab] || [], q = $('#find').value.trim();
+    let h = '<table><thead><tr><th class="nm" rowspan="2">이름</th>';
+    days.forEach(x => { h += '<th class="' + (x.holiday ? 'hol' : '') + '"' + (x.holName ? ' title="' + esc(x.holName) + '"' : '') + '>' + x.day + '</th>'; });
+    h += '</tr><tr>';
+    days.forEach(x => { h += '<th class="' + (x.holiday ? 'hol' : '') + '">' + WK[x.weekday] + '</th>'; });
+    h += '</tr></thead><tbody>';
+    let last = null;
+    staff.forEach(p => {
+      const me = q && p.name.indexOf(q) >= 0;
+      h += '<tr class="' + (last !== null && p.group !== last ? 'grp ' : '') + (me ? 'me' : '') + '">';
+      last = p.group;
+      h += '<td class="nm"><span class="g">' + esc(p.group) + '</span>' + esc(p.name) + '</td>';
+      days.forEach((x, d) => {
+        const c = p.codes[d] || '', bg = (D.colors || {})[c];
+        h += '<td class="' + (x.holiday ? 'hol' : '') + '" style="' + (bg ? 'background:' + bg + ';' : '') + (c === 'N' ? 'color:#ff0000;font-weight:700' : '') + '">' + esc(c) + '</td>';
+      });
+      h += '</tr>';
+    });
+    $('#grid').innerHTML = h + '</tbody></table>';
+    const row = $('#grid tr.me'); if (row) row.scrollIntoView({ block: 'center' });
+  }
+
+  $('#btnOpen').onclick = open;
+  $('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+  $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-t]'); if (b) { tab = b.dataset.t; render(); } });
+  $('#find').addEventListener('input', () => render());
+  $('#btnLock').onclick = () => { D = null; $('#grid').innerHTML = ''; $('#app').classList.add('hidden'); $('#lock').classList.remove('hidden'); $('#pw').focus(); };
+  $('#pw').focus();
+})();
+</script>
+</body>
+</html>
