@@ -434,6 +434,7 @@
       '<span>칸을 누르면 코드를 고를 수 있습니다</span></div>';
     if (!ro.staff.length) return h + '<div class="card">아직 인원이 없습니다. [인원 편집]으로 사람을 넣거나 [설정]에서 데이터를 가져오세요.</div>';
 
+    h += '<div class="mobile-hint">표를 손가락으로 좌우·위아래로 밀어 보세요 → (이름 칸은 고정)</div>';
     h += '<div class="gridwrap"><table class="grid"><thead>';
     // 1행 날짜
     h += '<tr><th class="stick" style="min-width:52px">그룹</th><th class="stick2" style="left:52px;min-width:150px">이름</th>';
@@ -527,7 +528,7 @@
       '<div class="row"><button data-code="">지우기 (빈 칸)</button><span class="sp"></span><button data-close="1">닫기</button></div>';
     document.body.appendChild(el);
     const r = td.getBoundingClientRect();
-    const left = Math.min(window.innerWidth - 310, Math.max(4, r.left - 120));
+    const left = Math.max(4, Math.min(window.innerWidth - el.offsetWidth - 8, r.left - 120));
     const top = r.bottom + 6 + 280 > window.innerHeight ? Math.max(4, r.top - 290) : r.bottom + 6;
     el.style.left = left + 'px'; el.style.top = top + 'px';
     el.addEventListener('click', ev => {

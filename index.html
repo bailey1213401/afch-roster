@@ -109,7 +109,26 @@
     box-shadow: 0 10px 30px rgba(0,0,0,.25); border: 2px solid #f9a825; font-size: 14px; }
   .tour-step { font-size: 12px; color: var(--muted); }
   .tour-title { font-weight: 700; font-size: 15px; margin: 2px 0 6px; }
-  @media (max-width: 700px) { main { padding: 10px 8px 60px; } header { padding: 8px; } nav { top: 0; position: static; } }
+  .gridwrap { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-x pan-y; }
+  .mobile-hint { display: none; }
+  @media (max-width: 700px) {
+    main { padding: 10px 8px 60px; }
+    header { padding: 8px; position: static; }
+    nav { top: 0; position: static; flex-wrap: wrap; padding: 0 4px; }
+    nav button { padding: 8px 10px; }
+    .mobile-hint { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+    /* 근무표: 그룹 칸 숨기고 이름 칸 좁게 → 날짜가 더 보이게 */
+    .gridwrap { max-height: 75vh; }
+    table.grid { font-size: 12px; }
+    table.grid th, table.grid td { min-width: 26px; height: 28px; }
+    table.grid .stick { display: none; }
+    table.grid .stick2 { left: 0 !important; min-width: 0 !important; max-width: 92px; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; font-size: 11px; }
+    table.grid .stick2 .cnt { display: none; }
+    /* 목록 표: 짓눌리지 않게 카드 안에서 좌우로 밀기 */
+    .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table.list { min-width: 540px; }
+    .picker { width: calc(100vw - 16px); max-width: 320px; }
+  }
 </style>
 </head>
 <body>
