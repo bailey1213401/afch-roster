@@ -7,18 +7,22 @@
 <title>응급실 근무표</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --ink: #1f2328; --muted: #6a737d; --line: #d0d7de;
-    --head: #e8eef7; --accent: #2457c5; --danger: #c62828; --warn: #b26a00; --ok: #2e7d32;
-    --hol: #fcefef;
+    --bg: #fff5f9; --panel: #ffffff; --ink: #3a2530; --muted: #8a6b78; --line: #f1cfdc;
+    --head: #fde6ef; --accent: #e0457b; --accent-d: #c2336a; --danger: #c62828; --warn: #b26a00; --ok: #2e7d32;
+    --hol: #fff0f0;
   }
+  .mascot { width: 34px; height: 34px; object-fit: contain; flex: none; }
+  .login .mascot { width: 96px; height: 96px; display: block; margin: 0 auto 8px; }
+  .linkbox { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .linkbox input { flex: 1 1 280px; background: #fffafc; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--ink);
     font: 14px/1.45 "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif; }
   button, select, input { font: inherit; }
   button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
-  button:hover { background: #f0f3f7; }
+  button:hover { background: #fdf0f5; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.primary:hover { background: #1c47a3; }
+  button.primary:hover { background: var(--accent-d); }
   button.danger { color: var(--danger); }
   button:disabled { opacity: .5; cursor: default; }
   input, select { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; background: #fff; }
@@ -26,7 +30,8 @@
 
   header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel);
     border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; flex-wrap: wrap; }
-  header h1 { font-size: 17px; margin: 0; }
+  header h1 { font-size: 17px; margin: 0; color: var(--accent-d); }
+  header { border-bottom: 3px solid #f8b9cf; }
   header .month { font-weight: 700; color: var(--accent); }
   header .sp { flex: 1; }
   header .who { color: var(--muted); font-size: 13px; }
@@ -109,7 +114,8 @@
 </head>
 <body>
 <div id="login" class="login card hidden">
-  <h2>응급실 근무표 로그인</h2>
+  <img class="mascot" src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
+  <h2 style="text-align:center;color:var(--accent-d)">응급실 근무표 로그인</h2>
   <input id="email" type="email" placeholder="아이디(이메일)" autocomplete="username">
   <input id="pw" type="password" placeholder="비밀번호" autocomplete="current-password">
   <button class="primary" id="btnLogin">로그인</button>
@@ -118,6 +124,7 @@
 
 <div id="app" class="hidden">
   <header>
+    <img class="mascot" src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
     <h1 id="appTitle">응급실 간호 근무표</h1>
     <span class="month" id="monthLabel"></span>
     <span class="mode hidden" id="modeTag">이 PC에만 저장 (시험 모드)</span>

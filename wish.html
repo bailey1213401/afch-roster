@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>원티드 신청</title>
+<style>
+  :root { --bg: #fff5f9; --panel: #ffffff; --ink: #3a2530; --muted: #8a6b78; --line: #f3cfdd;
+    --accent: #e0457b; --accent-d: #c2336a; --soft: #fde4ee; --danger: #c62828; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, select, input, textarea { font: inherit; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: center; gap: 12px; margin: 6px 0 14px; }
+  .top img { width: 64px; height: 64px; object-fit: contain; flex: none; }
+  .top h1 { font-size: 21px; margin: 0; color: var(--accent-d); }
+  .top .sub { color: var(--muted); font-size: 13px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(224,69,123,.06); }
+  .card h2 { font-size: 16px; margin: 0 0 8px; }
+  label.f { display: block; font-weight: 700; margin: 4px 0 6px; }
+  input[type=text], select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: #fff; }
+  textarea { min-height: 60px; resize: vertical; }
+  .note { color: var(--muted); font-size: 13px; }
+  .item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; background: #fffafc; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .row > * { flex: 1 1 120px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips label { border: 1px solid var(--line); border-radius: 18px; padding: 5px 12px; cursor: pointer; background: #fff; user-select: none; }
+  .chips input { display: none; }
+  .chips label.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; width: 100%; padding: 12px; font-size: 16px; }
+  button.primary:hover { background: var(--accent-d); }
+  button.del { color: var(--danger); flex: 0 0 auto; }
+  .err { color: var(--danger); margin-top: 8px; white-space: pre-line; }
+  .done { text-align: center; padding: 30px 16px; }
+  .done img { width: 110px; }
+  table.rank { border-collapse: collapse; font-size: 13px; width: 100%; }
+  table.rank td { padding: 3px 6px; border-bottom: 1px solid var(--soft); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <img src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
+    <div><h1 id="title">원티드 신청</h1><div class="sub">국군수도병원 응급실 간호 근무표</div></div>
+  </div>
+
+  <div id="bad" class="card hidden">링크가 올바르지 않습니다. 근무표 담당자에게 새 링크를 받아 주세요.</div>
+
+  <form id="form" class="hidden" autocomplete="off">
+    <div class="card">
+      <label class="f" for="name">이름</label>
+      <input type="text" id="name" maxlength="40" placeholder="예: 김지현 (계급 없이 이름만)">
+      <div class="note" style="margin-top:6px">한 번에 여러 날짜를 낼 수 있습니다. 다시 내면 담당자가 마지막 것을 확인합니다.</div>
+    </div>
+
+    <div class="card">
+      <h2>날짜별 원티드</h2>
+      <div id="items"></div>
+      <button type="button" id="add">+ 날짜 추가</button>
+    </div>
+
+    <div class="card">
+      <label class="f" for="memo">하고 싶은 말 (선택)</label>
+      <textarea id="memo" maxlength="500" placeholder="예: 4~5일 가족여행"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>순위·종류 뜻</h2>
+      <table class="rank">
+        <tr><td><b>희망</b></td><td>그날 이 근무(또는 휴무)였으면 좋겠다</td></tr>
+        <tr><td><b>금지</b></td><td>그날 이 근무는 빼 달라</td></tr>
+        <tr><td><b>1순위</b></td><td>꼭 필요함 (가장 먼저 지킴)</td></tr>
+        <tr><td><b>2순위</b></td><td>되면 좋음</td></tr>
+        <tr><td><b>3순위</b></td><td>들어주면 고마움</td></tr>
+      </table>
+      <div class="note" style="margin-top:6px">필요 인원·밤번 간격 같은 규칙 때문에 못 들어줄 수도 있습니다.</div>
+    </div>
+
+    <button type="submit" class="primary" id="send">원티드 보내기</button>
+    <div class="err" id="err"></div>
+  </form>
+
+  <div id="ok" class="card done hidden">
+    <img src="mascot.png" alt="" onerror="this.onerror=null;this.src='mascot.svg'">
+    <h2 style="margin-top:10px">보냈습니다!</h2>
+    <p class="note" id="okText"></p>
+    <button type="button" id="again">하나 더 내기</button>
+  </div>
+</div>
+
+<script src="vendor/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+(function () {
+  'use strict';
+  const CFG = window.APP_CONFIG || {};
+  const $ = s => document.querySelector(s);
+  const WD = ['일', '월', '화', '수', '목', '금', '토'];
+  const CODES = ['휴', 'D', 'E', 'N'];
+  const m = (new URLSearchParams(location.search).get('m') || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(m) || +m.slice(5) < 1 || +m.slice(5) > 12) { $('#bad').classList.remove('hidden'); return; }
+  const Y = +m.slice(0, 4), M = +m.slice(5);
+  const label = String(Y).slice(-2) + '년 ' + M + '월';
+  document.title = label + ' 원티드 신청';
+  $('#title').textContent = label + ' 원티드 신청';
+  const nDays = new Date(Y, M, 0).getDate();
+  const dayOpts = '<option value="">날짜</option>' + Array.from({ length: nDays }, (_, i) => {
+    const w = new Date(Y, M - 1, i + 1).getDay();
+    return '<option value="' + (i + 1) + '">' + M + '/' + (i + 1) + ' (' + WD[w] + ')</option>';
+  }).join('');
+
+  let seq = 0;
+  function addItem() {
+    const id = 'i' + (seq++);
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML =
+      '<div class="row"><select data-f="day">' + dayOpts + '</select>' +
+      '<select data-f="kind"><option value="희망">희망 (이 근무였으면)</option><option value="금지">금지 (이 근무는 빼 주세요)</option></select></div>' +
+      '<div class="row"><div class="chips" data-f="code">' + CODES.map(c => '<label><input type="checkbox" value="' + c + '">' + (c === '휴' ? '휴무' : c) + '</label>').join('') + '</div></div>' +
+      '<div class="row"><div class="chips" data-f="rank">' + [1, 2, 3].map(r => '<label' + (r === 3 ? ' class="on"' : '') + '><input type="radio" name="' + id + '" value="' + r + '"' + (r === 3 ? ' checked' : '') + '>' + r + '순위</label>').join('') + '</div></div>' +
+      '<div class="row"><input type="text" data-f="note" maxlength="100" placeholder="사유 (선택)"><button type="button" class="del">삭제</button></div>';
+    $('#items').appendChild(el);
+  }
+  $('#items').addEventListener('change', e => {
+    const chips = e.target.closest('.chips'); if (!chips) return;
+    chips.querySelectorAll('label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
+  });
+  $('#items').addEventListener('click', e => {
+    if (e.target.classList.contains('del')) {
+      if ($('#items').children.length > 1) e.target.closest('.item').remove();
+    }
+  });
+  $('#add').onclick = addItem;
+  addItem();
+  $('#form').classList.remove('hidden');
+
+  function collect() {
+    const errs = [];
+    const name = $('#name').value.trim();
+    if (!name) errs.push('이름을 적어 주세요.');
+    const items = [];
+    $('#items').querySelectorAll('.item').forEach((el, i) => {
+      const day = Number(el.querySelector('[data-f=day]').value);
+      const kind = el.querySelector('[data-f=kind]').value;
+      const codes = Array.from(el.querySelectorAll('[data-f=code] input:checked')).map(x => x.value);
+      const rk = el.querySelector('[data-f=rank] input:checked');
+      const note = el.querySelector('[data-f=note]').value.trim();
+      if (!day && !codes.length && !note) return;   // 빈 칸은 무시
+      if (!day) errs.push((i + 1) + '번째: 날짜를 골라 주세요.');
+      if (!codes.length) errs.push((i + 1) + '번째: 근무(휴무·D·E·N)를 하나 이상 골라 주세요.');
+      items.push({ day, kind, code: codes.join(','), rank: rk ? Number(rk.value) : 3, note });
+    });
+    if (!items.length && !errs.length) errs.push('날짜를 하나 이상 넣어 주세요.');
+    return { errs, name, items, memo: $('#memo').value.trim() };
+  }
+
+  async function submit(row) {
+    if (CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && window.supabase) {
+      const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+      const { error } = await sb.from('roster_wish_inbox').insert(row);
+      if (error) throw error;
+      return;
+    }
+    // 시험 모드: 이 브라우저에만 저장
+    const k = 'afch-roster:inbox';
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(k)) || []; } catch (e) { list = []; }
+    list.push(Object.assign({ id: Date.now(), at: new Date().toISOString(), done: false }, row));
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch (e) { throw new Error('브라우저에 저장하지 못했습니다'); }
+  }
+
+  $('#form').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('#err').textContent = '';
+    const c = collect();
+    if (c.errs.length) { $('#err').textContent = c.errs.join('\n'); return; }
+    const btn = $('#send'); btn.disabled = true; btn.textContent = '보내는 중…';
+    try {
+      await submit({ month: m, name: c.name, items: c.items, memo: c.memo || null });
+      $('#form').classList.add('hidden');
+      $('#okText').textContent = c.name + ' · ' + label + ' 원티드 ' + c.items.length + '건을 보냈습니다. 고칠 게 있으면 다시 내 주세요.';
+      $('#ok').classList.remove('hidden');
+      window.scrollTo(0, 0);
+    } catch (err) {
+      $('#err').textContent = '보내지 못했습니다. 잠시 뒤 다시 눌러 주세요. (' + (err.message || err) + ')';
+    } finally { btn.disabled = false; btn.textContent = '원티드 보내기'; }
+  });
+  $('#again').onclick = () => {
+    $('#items').innerHTML = ''; addItem(); $('#memo').value = '';
+    $('#ok').classList.add('hidden'); $('#form').classList.remove('hidden');
+  };
+})();
+</script>
+</body>
+</html>

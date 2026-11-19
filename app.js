@@ -46,6 +46,12 @@
           const { data, error } = await sb.from('roster_log').select('at,by,key,note').order('id', { ascending: false }).limit(n);
           if (error) throw error; return data;
         },
+        async inbox(month) {
+          const { data, error } = await sb.from('roster_wish_inbox').select('*').eq('month', month).order('id', { ascending: true });
+          if (error) throw error; return data;
+        },
+        async inboxDone(id, by) { const { error } = await sb.from('roster_wish_inbox').update({ done: true, done_by: by }).eq('id', id); if (error) throw error; },
+        async inboxDelete(id) { const { error } = await sb.from('roster_wish_inbox').delete().eq('id', id); if (error) throw error; },
       };
     }
     const P = 'afch-roster:';
@@ -59,6 +65,9 @@
       async save(key, value) { const at = new Date().toISOString(); put(key, { value, at }); return at; },
       async log(by, key, note) { const l = get('__log') || []; l.unshift({ at: new Date().toISOString(), by, key, note }); put('__log', l.slice(0, 500)); },
       async logs(n) { return (get('__log') || []).slice(0, n); },
+      async inbox(month) { return (get('inbox') || []).filter(x => x.month === month); },
+      async inboxDone(id, by) { const l = get('inbox') || []; l.forEach(x => { if (x.id === id) { x.done = true; x.done_by = by; } }); put('inbox', l); },
+      async inboxDelete(id) { put('inbox', (get('inbox') || []).filter(x => x.id !== id)); },
     };
   }
   const store = makeStore();
@@ -225,7 +234,7 @@
         '<li><b>설정</b> 탭: 연도·월, 공휴일, 필요 인원, 추가 휴무를 확인합니다.</li>' +
         '<li><b>RN/AN 근무표</b> 탭 → [인원 편집]: 전입·전출, 그룹(시니어·중간·막내·실습), 직책(선임·차선임)을 맞춥니다.</li>' +
         '<li><b>꼭 들어줘야 하는 것</b>(휴가·교육·확정된 원티드)은 근무표 칸을 눌러 <b>직접 넣습니다</b>. 원티드면 [원티드 순위]도 고릅니다. 이 칸은 자동 편성이 절대 바꾸지 않습니다.</li>' +
-        '<li><b>원티드</b> 탭: "되면 좋은" 희망·금지를 적습니다. 순위가 높을수록 더 잘 지켜 줍니다.</li>' +
+        '<li><b>원티드</b> 탭 → [○○년 ○월 원티드 받기]: 나온 링크(또는 단톡방 문구)를 단톡방에 올립니다. 모인 원티드는 [표에 넣기]로 원티드 표에 넣습니다. 순위가 높을수록 더 잘 지켜 줍니다.</li>' +
         '<li><b>규칙·예외</b> 탭: 같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다.</li>' +
         '<li>근무표 탭에서 시간(1분 권장)을 고르고 <b>[RN 자동 편성]</b> / <b>[AN 자동 편성]</b>을 누릅니다. 끝날 때까지 창을 닫지 마세요.</li>' +
         '<li><b>[규칙 검사]</b>로 빨간 테두리 칸을 확인하고, 칸을 눌러 손으로 고칩니다. 원티드를 바꿨으면 다시 자동 편성을 돌려도 됩니다 (손으로 넣은 칸은 그대로).</li>' +
@@ -248,7 +257,9 @@
         '<ul><li><b>근무표 칸에 직접</b> = 무조건 지킴. 확정된 휴가·휴무·근무.</li>' +
         '<li><b>원티드 탭</b> = 가능하면 지킴. 다른 규칙(필요 인원, 밤번 간격 등)과 부딪히면 못 들어줄 수 있습니다. 1순위 &gt; 금지 &gt; 2순위 &gt; 3순위 순으로 지킵니다.</li>' +
         '<li>원티드 탭 코드는 D·E·N·휴, 여러 개면 쉼표(예: 휴,N). "금지"는 그날 그 근무를 빼 달라는 뜻입니다.</li>' +
-        '<li>원티드를 고친 뒤에는 자동 편성을 다시 돌려야 반영됩니다.</li></ul>') +
+        '<li>원티드를 고친 뒤에는 자동 편성을 다시 돌려야 반영됩니다.</li>' +
+        '<li><b>신청 링크</b>는 로그인 없이 열립니다 (구글 폼 대신). 낸 사람은 남의 원티드를 볼 수 없습니다. 같은 사람이 여러 번 내면 "여러 번 냄"으로 표시되니 마지막 것만 넣고 나머지는 삭제하세요.</li>' +
+        '<li>다음 달 원티드는 미리 받아 둘 수 있고, [다음 달 근무표 시작] 뒤에 표에 넣을 수 있습니다.</li></ul>') +
       sec('자동 편성이 지키는 것',
         '<p class="note" style="margin-top:0">자세한 순서와 점수는 <b>편성 로직</b> 탭에 있습니다. 요약하면:</p>' +
         '<ul><li>최우선: 근무 시간대별 필요 인원, 매일 밤번 시니어 1명, 휴일 그룹 구성</li>' +
@@ -276,7 +287,8 @@
     { tab: 'RN', sel: 'table.grid td.cell[data-d]', title: '칸 고치기', text: '근무표 칸을 누르면 코드 단추가 뜹니다. 지금 아무 칸이나 눌러 보세요 (닫기를 누르면 그대로).<br>확정된 원티드는 [원티드 순위]를 고르고 코드를 누르면 색 글씨로 들어가고, 자동 편성이 바꾸지 않습니다.' },
     { tab: 'RN', sel: '.legend', title: '글자색 뜻', text: '파란 글씨 = 자동 편성, 검정 = 직접 넣음, 빨강·남색·초록 = 원티드 1·2·3순위.<br>자동 편성을 다시 돌리면 <b>파란 글씨만</b> 바뀝니다.' },
     { tab: 'RN', sel: '[data-act="staff"]', title: '인원 편집', text: '전입·전출, 그룹(시니어·중간·막내), 선임·차선임을 여기서 고칩니다.' },
-    { tab: 'wish', sel: '#view table.list', title: '원티드', text: '"되면 좋은" 희망·금지 목록입니다. 칸을 바로 고치면 저장됩니다.<br>[줄 추가]로 새 원티드를 넣고, 날짜·코드·순위를 고르세요.' },
+    { tab: 'wish', sel: '#view .card', title: '원티드 받기', text: '받을 달을 고르면 신청 링크가 나옵니다. [단톡방 문구 복사]를 눌러 단톡방에 붙여 넣으세요.<br>낸 원티드는 아래 "받은 원티드"에 모이고, [표에 넣기]를 누르면 원티드 표로 들어갑니다.' },
+    { tab: 'wish', sel: '#wishTable', title: '원티드 표', text: '자동 편성이 실제로 쓰는 목록입니다. 칸을 바로 고치면 저장됩니다.<br>[줄 추가]로 직접 넣을 수도 있습니다.' },
     { tab: 'rules', sel: '#view', title: '규칙·예외', text: '같이 근무하면 안 되는 짝, 일직 횟수, 대학원·임부 같은 개인 예외를 적습니다. 다음 자동 편성부터 적용됩니다.' },
     { tab: 'RN', sel: '#genSec', title: '편성 시간 고르기', text: '오래 돌릴수록 결과가 좋습니다. 보통 1분, 위반이 남으면 2분 이상.' },
     { tab: 'RN', sel: '[data-act="generate"]', title: '자동 편성', text: '누르면 파란 글씨 칸을 지우고 새로 짭니다. 직접 넣은 칸과 원티드는 그대로입니다.<br>지금 눌러 봐도 됩니다. 끝날 때까지 창을 닫지 마세요.' },
@@ -529,6 +541,18 @@
     else if (act === 'addHoliday') { S.config.holidays.push({ date: '', name: '' }); markDirty('config'); render(); }
     else if (act === 'delHoliday') { S.config.holidays.splice(Number(el.dataset.i), 1); markDirty('config'); render(); }
     else if (act === 'tour') startTour();
+    else if (act === 'inboxMonth') { S.inboxMonth = el.dataset.m; render(); }
+    else if (act === 'inboxReload') loadInbox();
+    else if (act === 'copyLink') copyText(wishLink(S.inboxMonth), '링크를 복사했습니다.');
+    else if (act === 'copyMsg') copyText('[응급실] ' + mkLabel(S.inboxMonth) + ' 원티드 신청 받습니다.\n아래 링크에서 이름·날짜·순위를 골라 보내 주세요.\n' + wishLink(S.inboxMonth), '단톡방 문구를 복사했습니다.');
+    else if (act === 'inboxAdd') inboxAdd([el.dataset.id]);
+    else if (act === 'inboxAll') inboxAdd((S.inbox || []).filter(x => !x.done).map(x => x.id));
+    else if (act === 'inboxDel') {
+      const x = (S.inbox || []).find(r => String(r.id) === String(el.dataset.id)); if (!x) return;
+      if (!confirm(x.name + '님이 낸 원티드를 받은 목록에서 지웁니다. (아래 표에 이미 넣은 줄은 그대로)')) return;
+      try { await store.inboxDelete(x.id); log('wishes', '받은 원티드 삭제: ' + x.name); } catch (e) { toast('삭제 실패: ' + e.message); }
+      loadInbox();
+    }
     else if (act === 'newMonth') newMonth();
     else if (act === 'importJson') $('#importFile').click();
     else if (act === 'exportJson') exportJson();
@@ -630,13 +654,88 @@
     TYPES.forEach(t => S.rosters[t].staff.forEach(p => { if (out.indexOf(p.name) < 0) out.push(p.name); }));
     return out;
   }
+  // 원티드 받기 (신청 링크·받은 원티드)
+  const mkOf = (y, m) => y + '-' + String(m).padStart(2, '0');
+  const mkLabel = mk => mk.slice(2, 4) + '년 ' + Number(mk.slice(5)) + '월';
+  function inboxMonths() {
+    const y = S.config.year, m = S.config.month;
+    return [mkOf(y, m), m === 12 ? mkOf(y + 1, 1) : mkOf(y, m + 1)];
+  }
+  function wishLink(mk) { return new URL('wish.html?m=' + mk, location.href).href; }
+  function staffAll() { return TYPES.reduce((a, t) => a.concat(S.rosters[t].staff), []); }
+  function inboxCard() {
+    const ms = inboxMonths();
+    if (ms.indexOf(S.inboxMonth) < 0) S.inboxMonth = ms[0];
+    const link = wishLink(S.inboxMonth);
+    return '<div class="card"><h2>원티드 받기</h2>' +
+      '<div class="bar">' + ms.map((mk, i) => '<button data-act="inboxMonth" data-m="' + mk + '" class="' + (S.inboxMonth === mk ? 'primary' : '') + '">' +
+        mkLabel(mk) + ' 원티드 받기' + (i ? ' (다음 달)' : ' (이번 근무표)') + '</button>').join('') + '</div>' +
+      '<div class="linkbox"><input id="wishLink" readonly value="' + esc(link) + '">' +
+      '<button data-act="copyLink">링크 복사</button><button data-act="copyMsg">단톡방 문구 복사</button><a href="' + esc(link) + '" target="_blank" rel="noopener"><button>열어 보기</button></a></div>' +
+      '<p class="note">이 링크를 단톡방에 올리면 로그인 없이 원티드를 낼 수 있습니다. 낸 사람은 남의 원티드를 볼 수 없고, 여기서만 보입니다.</p>' +
+      '<div id="inbox"><p class="note">불러오는 중…</p></div></div>';
+  }
+  async function loadInbox() {
+    const box = $('#inbox'); if (!box) return;
+    const mk = S.inboxMonth;
+    let list;
+    try { list = await store.inbox(mk); } catch (e) {
+      box.innerHTML = '<p class="err">받은 원티드를 불러오지 못했습니다: ' + esc(e.message) + '<br>(Supabase에 wish_inbox.sql을 아직 안 돌렸다면 먼저 돌려 주세요)</p>'; return;
+    }
+    if (S.tab !== 'wish' || S.inboxMonth !== mk) return;
+    S.inbox = list;
+    const isCur = mk === inboxMonths()[0];
+    const staff = staffAll();
+    const left = list.filter(x => !x.done).length;
+    const names = {}; list.forEach(x => { names[x.name] = (names[x.name] || 0) + 1; });
+    let h = '<div class="bar" style="margin-top:6px"><b>받은 원티드 ' + list.length + '건</b><span class="note">(아직 안 넣은 것 ' + left + '건)</span><span class="sp"></span>' +
+      '<button data-act="inboxReload">새로 받은 것 보기</button>' +
+      (isCur && left ? '<button class="primary" data-act="inboxAll">안 넣은 것 모두 아래 표에 넣기</button>' : '') + '</div>';
+    if (!isCur && list.length) h += '<p class="note">' + mkLabel(mk) + ' 원티드는 설정 → [다음 달 근무표 시작]을 한 뒤 아래 표에 넣을 수 있습니다.</p>';
+    if (!list.length) h += '<p class="note">아직 받은 원티드가 없습니다.</p>';
+    else h += '<table class="list"><thead><tr><th style="width:110px">받은 시각</th><th style="width:170px">이름</th><th>원티드</th><th style="width:150px"></th></tr></thead><tbody>' +
+      list.map(x => {
+        const full = findStaffName(staff, String(x.name).trim());
+        const items = (x.items || []).map(it => '<div>' + esc(it.day) + '일 ' + esc(it.kind) + ' <b>' + esc(it.code === '휴' ? '휴무' : it.code) + '</b> · ' + esc(it.rank) + '순위' + (it.note ? ' <span class="note">(' + esc(it.note) + ')</span>' : '') + '</div>').join('');
+        return '<tr style="' + (x.done ? 'opacity:.5' : '') + '"><td>' + esc(new Date(x.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '</td>' +
+          '<td>' + esc(x.name) + (full && full !== x.name ? '<div class="note">→ ' + esc(full) + '</div>' : '') +
+          (!full ? '<div class="lv-주의">명단에서 못 찾음</div>' : '') + (names[x.name] > 1 ? '<div class="lv-주의">여러 번 냄</div>' : '') + '</td>' +
+          '<td>' + items + (x.memo ? '<div class="note">메모: ' + esc(x.memo) + '</div>' : '') + '</td>' +
+          '<td style="white-space:nowrap">' + (x.done ? '<span class="note">넣음 ✓ </span>' : isCur ? '<button data-act="inboxAdd" data-id="' + x.id + '">표에 넣기</button> ' : '') +
+          '<button class="danger" data-act="inboxDel" data-id="' + x.id + '">삭제</button></td></tr>';
+      }).join('') + '</tbody></table>';
+    box.innerHTML = h;
+  }
+  async function inboxAdd(ids) {
+    const staff = staffAll();
+    let n = 0;
+    for (const id of ids) {
+      const x = (S.inbox || []).find(r => String(r.id) === String(id));
+      if (!x || x.done) continue;
+      const name = findStaffName(staff, String(x.name).trim()) || x.name;
+      (x.items || []).forEach(it => {
+        S.wishes.push({ name, day: Number(it.day), kind: it.kind === '금지' ? '금지' : '희망', code: String(it.code || ''), rank: Number(it.rank) || 3, note: it.note || x.memo || '' });
+        n++;
+      });
+      try { await store.inboxDone(x.id, S.user); x.done = true; } catch (e) { toast('넣음 표시 실패: ' + e.message); }
+      log('wishes', '받은 원티드 넣기: ' + name + ' ' + (x.items || []).length + '건');
+    }
+    markDirty('wishes'); render();
+    toast('원티드 ' + n + '건을 표에 넣었습니다. 자동 편성을 다시 돌리면 반영됩니다.');
+  }
+  function copyText(text, done) {
+    const fallback = () => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } t.remove(); toast(ok ? done : '복사가 안 됩니다. 링크 칸을 길게 눌러 직접 복사하세요.'); };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => toast(done), fallback); else fallback();
+  }
+
   function wishView() {
     const names = allNames();
     const n = monthDays().length;
-    let h = '<div class="card"><h2>원티드 (자동 편성이 지키려고 하는 희망·금지)</h2>' +
+    setTimeout(loadInbox, 0);
+    let h = inboxCard() + '<div class="card"><h2>원티드 표 (자동 편성이 지키려고 하는 희망·금지)</h2>' +
       '<p class="note">꼭 들어줘야 하는 휴가·휴무·근무(1·2순위로 확정된 것)는 근무표 칸에 직접 넣고 [원티드 순위]를 고르세요 — 그 칸은 자동 편성이 바꾸지 않습니다.<br>' +
       '여기 표는 "되면 좋은 것"입니다. 희망 = 그날 이 근무였으면, 금지 = 그날 이 근무는 빼 달라. 코드는 D·E·N·휴, 여러 개면 쉼표(예: 휴,N). 순위가 높을수록 더 지킵니다.</p>' +
-      '<table class="list"><thead><tr><th style="width:190px">이름</th><th style="width:70px">날짜(일)</th><th style="width:90px">희망/금지</th><th style="width:90px">코드</th><th style="width:80px">순위</th><th>메모</th><th style="width:60px"></th></tr></thead><tbody>';
+      '<table class="list" id="wishTable"><thead><tr><th style="width:190px">이름</th><th style="width:70px">날짜(일)</th><th style="width:90px">희망/금지</th><th style="width:90px">코드</th><th style="width:80px">순위</th><th>메모</th><th style="width:60px"></th></tr></thead><tbody>';
     S.wishes.forEach((w, i) => {
       h += '<tr data-i="' + i + '"><td><select data-f="name"><option value=""></option>' +
         names.concat(w.name && names.indexOf(w.name) < 0 ? [w.name] : []).map(nm => '<option' + (nm === w.name ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select></td>' +
